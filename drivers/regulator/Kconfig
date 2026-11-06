@@ -1209,6 +1209,16 @@ config REGULATOR_QCOM_USB_VBUS
 	  Say M here if you want to include support for enabling the VBUS output
 	  as a module. The module will be named "qcom_usb_vbus_regulator".
 
+config REGULATOR_QCOM_SMBCHG_OTG
+	tristate "Qualcomm PMI8994/PMI8996 SMBCHG OTG boost regulator"
+	depends on SPMI || COMPILE_TEST
+	depends on OF
+	help
+	  The 5 V USB VBUS boost of the SMBCHG charger block in the PMI8994
+	  and PMI8996 PMICs (MSM8996 phones), for USB host (OTG) mode.
+
+	  Say M to build it as a module named "qcom_smbchg_otg-regulator".
+
 config REGULATOR_RAA215300
 	tristate "Renesas RAA215300 driver"
 	select REGMAP_I2C
