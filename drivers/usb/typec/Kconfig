@@ -77,6 +77,19 @@ config TYPEC_RT1719
 	  If you choose to build this driver as a dynamically linked module, the
 	  module will be called rt1719.ko
 
+config TYPEC_PI5USB302
+	tristate "Pericom PI5USB302 Type-C CC logic driver"
+	depends on I2C
+	depends on REGULATOR
+	depends on USB_ROLE_SWITCH || !USB_ROLE_SWITCH
+	help
+	  Say Y or M here if your system has a Pericom (Diodes) PI5USB302
+	  Type-C dual role CC logic chip, as some ZTE Axon 7 units do. It sets
+	  the USB role (and VBUS) from what is plugged in.
+
+	  If you choose to build this driver as a dynamically linked module, the
+	  module will be called pi5usb302.ko.
+
 config TYPEC_HD3SS3220
 	tristate "TI HD3SS3220 Type-C DRP Port controller driver"
 	depends on I2C
