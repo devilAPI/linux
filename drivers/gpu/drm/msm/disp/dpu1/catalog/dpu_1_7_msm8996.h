@@ -43,9 +43,11 @@ static const struct dpu_ctl_cfg msm8996_ctl[] = {
 	{
 		.name = "ctl_0", .id = CTL_0,
 		.base = 0x1000, .len = 0x64,
+		.features = BIT(DPU_CTL_SPLIT_DISPLAY),
 	}, {
 		.name = "ctl_1", .id = CTL_1,
 		.base = 0x1200, .len = 0x64,
+		.features = BIT(DPU_CTL_SPLIT_DISPLAY),
 	}, {
 		.name = "ctl_2", .id = CTL_2,
 		.base = 0x1400, .len = 0x64,
