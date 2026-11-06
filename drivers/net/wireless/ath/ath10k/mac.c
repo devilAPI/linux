@@ -324,9 +324,13 @@ static int ath10k_install_key(struct ath10k_vif *arvif,
 	if (ret)
 		return ret;
 
-	time_left = wait_for_completion_timeout(&ar->install_key_done, 3 * HZ);
-	if (time_left == 0)
-		return -ETIMEDOUT;
+	/* QCA6174 firmware often sends no security indication for a key
+	 * deletion: waiting for it stalls disconnects and roams for 3 s */
+	if (cmd != DISABLE_KEY) {
+		time_left = wait_for_completion_timeout(&ar->install_key_done, 3 * HZ);
+		if (time_left == 0)
+			return -ETIMEDOUT;
+	}
 
 	return 0;
 }
