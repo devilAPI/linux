@@ -1,0 +1,313 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Pericom (Diodes) PI5USB302 USB Type-C CC logic (dual role port).
+ *
+ * The chip has four byte registers (ID, CTL, INT, CC_STAT at 0x01-0x04)
+ * and no register address phase: a read always returns the registers from
+ * 0x01 on, a write always starts at 0x01 (ID is read-only), and reading INT
+ * clears it. Behaviour follows the vendor driver in ZTE's Axon 7 kernel:
+ * dual role with Try.SNK, interrupt line active low.
+ *
+ * The driver sets the USB role from the attached partner and registers a
+ * Type-C port for userspace: a device attached gives host role with VBUS on,
+ * a host (PC, charger) gives device role, nothing attached gives host role
+ * with VBUS off. That idle host role is needed on the Axon 7: while dwc3 is
+ * in device role the chip never reports an attached device (sink), whatever
+ * is plugged in; in host role it does, within a fraction of a second. VBUS
+ * is only switched on for an attached device (or force_host). Without a
+ * usable interrupt the driver polls the chip.
+ */
+
+
+#include <linux/bitfield.h>
+#include <linux/bits.h>
+#include <linux/delay.h>
+#include <linux/i2c.h>
+#include <linux/interrupt.h>
+#include <linux/module.h>
+#include <linux/mutex.h>
+#include <linux/of.h>
+#include <linux/property.h>
+#include <linux/regulator/consumer.h>
+#include <linux/usb/role.h>
+#include <linux/usb/typec.h>
+#include <linux/workqueue.h>
+
+#define PI5USB302_POLL_MS		500
+
+/*
+ * Host role and VBUS regardless of CC detection, for accessories that do not
+ * present Rd: echo 1 > /sys/module/pi5usb302/parameters/force_host
+ * (taken over at the next poll or interrupt).
+ */
+static bool force_host;
+module_param(force_host, bool, 0644);
+MODULE_PARM_DESC(force_host, "host role and VBUS without an attached device (default: off)");
+
+
+#define PI5USB302_NREGS			4	/* ID, CTL, INT, CC_STAT */
+#define PI5USB302_ID			0
+#define PI5USB302_CTL			1
+#define PI5USB302_INT			2
+#define PI5USB302_CC_STAT		3
+
+/* CTL: interrupt unmasked, dual role 2 (Try.SNK), default current
+ * advertisement, accessory detection, Try.SNK on, no power saving */
+#define PI5USB302_CTL_INIT		0x76
+
+#define PI5USB302_INT_ATTACH		BIT(0)
+#define PI5USB302_INT_DETACH		BIT(1)
+
+#define PI5USB302_CC_POLARITY		GENMASK(1, 0)
+#define PI5USB302_CC_ATTACHED		GENMASK(4, 2)
+#define PI5USB302_CC_VBUS		BIT(7)
+
+enum pi5usb302_attached {
+	PI5USB302_STANDBY = 0,
+	PI5USB302_DEVICE,		/* partner is a device: we are host */
+	PI5USB302_HOST,			/* partner is a host: we are device */
+	PI5USB302_AUDIO_ACC,
+	PI5USB302_DEBUG_ACC,
+};
+
+struct pi5usb302 {
+	struct device *dev;
+	struct i2c_client *client;
+	struct mutex lock;
+	struct usb_role_switch *role_sw;
+	struct typec_port *port;
+	struct regulator *vbus;
+	bool vbus_on;
+	enum usb_role role;
+	struct delayed_work poll;
+	bool polling;
+	enum usb_role last_logged;
+};
+
+static int pi5usb302_read(struct pi5usb302 *pi, u8 *regs)
+{
+	int ret = i2c_master_recv(pi->client, regs, PI5USB302_NREGS);
+
+	if (ret < 0)
+		return ret;
+	return ret == PI5USB302_NREGS ? 0 : -EIO;
+}
+
+static int pi5usb302_write_ctl(struct pi5usb302 *pi, u8 ctl)
+{
+	u8 buf[2];
+	int ret;
+
+	/* writes start at ID (read-only): send its current value first */
+	ret = i2c_master_recv(pi->client, buf, 1);
+	if (ret < 0)
+		return ret;
+	buf[1] = ctl;
+	ret = i2c_master_send(pi->client, buf, sizeof(buf));
+	if (ret < 0)
+		return ret;
+	return ret == sizeof(buf) ? 0 : -EIO;
+}
+
+static void pi5usb302_set_vbus(struct pi5usb302 *pi, bool on)
+{
+	int ret;
+
+	if (!pi->vbus || pi->vbus_on == on)
+		return;
+	ret = on ? regulator_enable(pi->vbus) : regulator_disable(pi->vbus);
+	if (ret) {
+		dev_err(pi->dev, "VBUS %s failed: %d\n", on ? "on" : "off", ret);
+		return;
+	}
+	pi->vbus_on = on;
+}
+
+static void pi5usb302_update(struct pi5usb302 *pi)
+{
+	enum usb_role role;
+	bool vbus;
+	u8 regs[PI5USB302_NREGS];
+	unsigned int attached;
+	int ret;
+
+	mutex_lock(&pi->lock);
+	ret = pi5usb302_read(pi, regs);	/* clears INT */
+	if (ret) {
+		dev_err(pi->dev, "read failed: %d\n", ret);
+		goto out;
+	}
+	attached = FIELD_GET(PI5USB302_CC_ATTACHED, regs[PI5USB302_CC_STAT]);
+	/* device role only for a host partner; idle stays host (see top) */
+	role = attached == PI5USB302_HOST && !READ_ONCE(force_host) ? USB_ROLE_DEVICE : USB_ROLE_HOST;
+	vbus = attached == PI5USB302_DEVICE || READ_ONCE(force_host);
+
+	dev_dbg(pi->dev, "ctl %#x int %#x cc_stat %#x: attached %u\n",
+		regs[PI5USB302_CTL], regs[PI5USB302_INT], regs[PI5USB302_CC_STAT], attached);
+
+	if (!vbus)
+		pi5usb302_set_vbus(pi, false);
+	if (role != pi->role) {
+		ret = usb_role_switch_set_role(pi->role_sw, role);
+		if (ret)
+			dev_err(pi->dev, "role switch failed: %d\n", ret);
+		pi->role = role;
+	}
+	if (vbus && !pi->vbus_on) {
+		pi5usb302_set_vbus(pi, true);
+		dev_info(pi->dev, "host, VBUS on (%s)\n",
+			 attached == PI5USB302_DEVICE ? "device attached" : "forced");
+	} else if (!vbus && role != pi->last_logged) {
+		dev_info(pi->dev, "%s\n", role == USB_ROLE_DEVICE ? "device (host attached)" : "host, idle");
+	}
+	pi->last_logged = vbus ? USB_ROLE_NONE : role;
+
+	if (pi->port) {
+		typec_set_data_role(pi->port, role == USB_ROLE_HOST ? TYPEC_HOST : TYPEC_DEVICE);
+		typec_set_pwr_role(pi->port, vbus ? TYPEC_SOURCE : TYPEC_SINK);
+		typec_set_orientation(pi->port,
+			!attached ? TYPEC_ORIENTATION_NONE :
+			FIELD_GET(PI5USB302_CC_POLARITY, regs[PI5USB302_CC_STAT]) == 2 ?
+				TYPEC_ORIENTATION_REVERSE : TYPEC_ORIENTATION_NORMAL);
+	}
+out:
+	mutex_unlock(&pi->lock);
+}
+
+static irqreturn_t pi5usb302_irq(int irq, void *data)
+{
+	pi5usb302_update(data);
+	return IRQ_HANDLED;
+}
+
+static void pi5usb302_poll(struct work_struct *work)
+{
+	struct pi5usb302 *pi = container_of(to_delayed_work(work), struct pi5usb302, poll);
+
+	pi5usb302_update(pi);
+	schedule_delayed_work(&pi->poll, msecs_to_jiffies(PI5USB302_POLL_MS));
+}
+
+static int pi5usb302_probe(struct i2c_client *client)
+{
+	struct device *dev = &client->dev;
+	struct typec_capability cap = {};
+	struct fwnode_handle *connector;
+	struct pi5usb302 *pi;
+	u8 regs[PI5USB302_NREGS];
+	int ret;
+
+	pi = devm_kzalloc(dev, sizeof(*pi), GFP_KERNEL);
+	if (!pi)
+		return -ENOMEM;
+	pi->dev = dev;
+	pi->client = client;
+	pi->role = USB_ROLE_NONE;
+	pi->last_logged = USB_ROLE_NONE;
+	mutex_init(&pi->lock);
+	i2c_set_clientdata(client, pi);
+
+	ret = pi5usb302_read(pi, regs);
+	if (ret)
+		return dev_err_probe(dev, ret, "no PI5USB302\n");
+
+	connector = device_get_named_child_node(dev, "connector");
+	if (!connector)
+		return dev_err_probe(dev, -ENODEV, "no connector node\n");
+
+	pi->role_sw = fwnode_usb_role_switch_get(connector);
+	if (IS_ERR(pi->role_sw)) {
+		ret = dev_err_probe(dev, PTR_ERR(pi->role_sw), "no USB role switch\n");
+		goto err_put_fwnode;
+	}
+
+	pi->vbus = devm_of_regulator_get_optional(dev, to_of_node(connector), "vbus");
+	if (IS_ERR(pi->vbus)) {
+		ret = PTR_ERR(pi->vbus);
+		if (ret != -ENODEV) {
+			dev_err_probe(dev, ret, "VBUS regulator\n");
+			goto err_put_role;
+		}
+		pi->vbus = NULL;
+	}
+
+	cap.type = TYPEC_PORT_DRP;
+	cap.data = TYPEC_PORT_DRD;
+	cap.prefer_role = TYPEC_SINK;	/* Try.SNK */
+	cap.fwnode = connector;
+	pi->port = typec_register_port(dev, &cap);
+	if (IS_ERR(pi->port)) {
+		ret = dev_err_probe(dev, PTR_ERR(pi->port), "Type-C port\n");
+		goto err_put_role;
+	}
+
+	ret = pi5usb302_write_ctl(pi, PI5USB302_CTL_INIT);
+	if (ret) {
+		dev_err_probe(dev, ret, "CTL init\n");
+		goto err_unreg_port;
+	}
+
+	pi5usb302_update(pi);
+
+	ret = -ENXIO;
+	if (client->irq > 0)
+		ret = devm_request_threaded_irq(dev, client->irq, NULL, pi5usb302_irq,
+						IRQF_ONESHOT, dev_name(dev), pi);
+	if (ret) {
+		dev_warn(dev, "no interrupt (%d), polling every %u ms\n", ret, PI5USB302_POLL_MS);
+		INIT_DELAYED_WORK(&pi->poll, pi5usb302_poll);
+		pi->polling = true;
+		schedule_delayed_work(&pi->poll, msecs_to_jiffies(PI5USB302_POLL_MS));
+	}
+
+	fwnode_handle_put(connector);
+	dev_info(dev, "PI5USB302 Type-C, ctl %#x\n", PI5USB302_CTL_INIT);
+	return 0;
+
+err_unreg_port:
+	typec_unregister_port(pi->port);
+err_put_role:
+	usb_role_switch_put(pi->role_sw);
+err_put_fwnode:
+	fwnode_handle_put(connector);
+	return ret;
+}
+
+static void pi5usb302_remove(struct i2c_client *client)
+{
+	struct pi5usb302 *pi = i2c_get_clientdata(client);
+
+	if (pi->polling)
+		cancel_delayed_work_sync(&pi->poll);
+	else
+		disable_irq(client->irq);
+	pi5usb302_set_vbus(pi, false);
+	typec_unregister_port(pi->port);
+	usb_role_switch_put(pi->role_sw);
+}
+
+static const struct of_device_id pi5usb302_of_match[] = {
+	{ .compatible = "pericom,pi5usb302" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, pi5usb302_of_match);
+
+static const struct i2c_device_id pi5usb302_id[] = {
+	{ "pi5usb302" },
+	{ }
+};
+MODULE_DEVICE_TABLE(i2c, pi5usb302_id);
+
+static struct i2c_driver pi5usb302_driver = {
+	.driver = {
+		.name = "pi5usb302",
+		.of_match_table = pi5usb302_of_match,
+	},
+	.probe = pi5usb302_probe,
+	.remove = pi5usb302_remove,
+	.id_table = pi5usb302_id,
+};
+module_i2c_driver(pi5usb302_driver);
+
+MODULE_DESCRIPTION("Pericom PI5USB302 USB Type-C CC logic driver");
+MODULE_LICENSE("GPL");
