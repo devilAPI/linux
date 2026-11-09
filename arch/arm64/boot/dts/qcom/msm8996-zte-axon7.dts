@@ -91,6 +91,16 @@
 			ftrace-size = <0x100000>;
 			pmsg-size = <0x100000>;
 		};
+
+		/*
+		 * ZTE "vlog": 1 MiB the bootloader hands to another writer
+		 * (address and size in vendor IMEM); ZTE's kernel keeps it out
+		 * of Linux, so do we.
+		 */
+		vlog@9ff00000 {
+			reg = <0x0 0x9ff00000 0x0 0x100000>;
+			no-map;
+		};
 	};
 
 	divclk1_cdc: divclk1 {
@@ -503,6 +513,15 @@
 
 &mmcc {
 	vdd-gfx-supply = <&vdd_gfx>;
+};
+
+/*
+ * The bootloader loads the kernel and initramfs at 0xa0000000, inside the
+ * 32 MiB the SoC dtsi allows for rmtfs: no room is left and the modem cannot
+ * start. Allow the whole 512 MiB above it.
+ */
+&rmtfs_mem {
+	alloc-ranges = <0x0 0xa0000000 0x0 0x20000000>;
 };
 
 &mss_pil {
