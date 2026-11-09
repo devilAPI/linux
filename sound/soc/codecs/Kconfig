@@ -607,6 +607,14 @@ config SND_SOC_AK4458
 	depends on I2C
 	select REGMAP_I2C
 
+config SND_SOC_AK4961
+	tristate "AKM AK4961 codec (SLIMbus + SPI)"
+	depends on SLIMBUS && SPI
+	select REGMAP
+	help
+	  The AK4961 audio codec of the ZTE Axon 7, registers over SPI and
+	  audio over SLIMbus.
+
 config SND_SOC_AK4490
 	tristate "AKM AK4490 DAC"
 	depends on I2C
