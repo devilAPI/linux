@@ -736,6 +736,30 @@
 &blsp1_i2c6 {
 	status = "okay";
 
+	/*
+	 * TFA9890 speaker amplifiers, fed by the AK4961's PORT2 (SDTO2) I2S;
+	 * resets on PMI8994 GPIO 2/3 (low = running). Left/right as ZTE's
+	 * stereo_qc_spk_l/r is not verified yet.
+	 */
+	speaker_l: audio-amplifier@34 {
+		compatible = "nxp,tfa9890";
+		reg = <0x34>;
+		#sound-dai-cells = <0>;
+		sound-name-prefix = "Speaker Left";
+		vddd-supply = <&vreg_s4a_1p8>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&speaker_reset_default>;
+	};
+
+	speaker_r: audio-amplifier@35 {
+		compatible = "nxp,tfa9890";
+		reg = <0x35>;
+		#sound-dai-cells = <0>;
+		sound-name-prefix = "Speaker Right";
+		vddd-supply = <&vreg_s4a_1p8>;
+	};
+
 	hifi_clk: clock-generator@11 {
 		compatible = "asahi-kasei,ak8157";
 		reg = <0x11>;
@@ -792,6 +816,7 @@
 		ak4961: codec@2,0 {
 			compatible = "slim1dd,4961";
 			reg = <2 0>;
+			#sound-dai-cells = <1>;
 
 			slim-ifc-dev = <&ak4961_ifd>;
 			akm,spi = <&ak4961_spi>;
@@ -835,6 +860,22 @@
 
 		cpu {
 			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
+		};
+	};
+
+	speaker-dai-link {
+		link-name = "Speakers";
+
+		cpu {
+			sound-dai = <&q6afedai SLIMBUS_0_RX>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+
+		codec {
+			sound-dai = <&ak4961 0>, <&speaker_l>, <&speaker_r>;
 		};
 	};
 
@@ -892,6 +933,15 @@
 };
 
 &pmi8994_gpios {
+	/* TFA9890 speaker amplifier resets (GPIO 2 and 3, ZTE SPKR_SD_N), low = running */
+	speaker_reset_default: speaker-reset-state {
+		pins = "gpio2", "gpio3";
+		function = PMIC_GPIO_FUNC_NORMAL;
+		output-low;
+		bias-disable;
+		power-source = <PM8994_GPIO_S4>;
+	};
+
 	/* Hi-Fi: AK4490 PDN (GPIO 1), ISL54405 switch power (GPIO 10) */
 	ak4490_pdn_default: ak4490-pdn-state {
 		pins = "gpio1";
