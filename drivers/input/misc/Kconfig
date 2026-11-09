@@ -236,6 +236,19 @@ config INPUT_PMIC8XXX_PWRKEY
 	  To compile this driver as a module, choose M here: the
 	  module will be called pmic8xxx-pwrkey.
 
+config INPUT_QCOM_PMI8994_HAPTICS
+	tristate "Qualcomm PMI8994/PMI8996 haptics"
+	depends on ARCH_QCOM || COMPILE_TEST
+	depends on SPMI
+	select INPUT_FF_MEMLESS
+	help
+	  The LRA vibrator driver of the PMI8994 and PMI8996 PMICs
+	  (and related ones), in buffer mode, as a force-feedback
+	  rumble device.
+
+	  To compile this driver as module, choose M here: the
+	  module will be called qcom-pmi8994-haptics.
+
 config INPUT_SPARCSPKR
 	tristate "SPARC Speaker support"
 	depends on PCI && SPARC64

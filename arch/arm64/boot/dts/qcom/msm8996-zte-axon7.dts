@@ -666,6 +666,14 @@
 	status = "okay";
 };
 
+/* LRA vibrator, ZTE's msm-pmi8994.dtsi values (buffer mode, sine) */
+&pmi8994_haptics {
+	qcom,wave-play-rate-us = <4255>;
+	qcom,brake-pattern = [03 03 00 00];
+	qcom,vmax-microvolt = <2668000>;
+	status = "okay";
+};
+
 &pmi8994_gpios {
 	typec_vreg_default: typec-vreg-state {
 		/* GPIO 8: VCONN 5 V regulator enable, GPIO 9: HD3SS3220 3.3 V */
