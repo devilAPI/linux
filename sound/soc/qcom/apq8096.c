@@ -6,7 +6,10 @@
 #include <sound/soc.h>
 #include <sound/soc-dapm.h>
 #include <sound/pcm.h>
+#include <sound/pcm_params.h>
+#include <dt-bindings/sound/qcom,q6dsp-lpass-ports.h>
 #include "common.h"
+#include "qdsp6/q6afe.h"
 
 #define SLIM_MAX_TX_PORTS 16
 #define SLIM_MAX_RX_PORTS 16
@@ -88,14 +91,98 @@ static int apq8096_init(struct snd_soc_pcm_runtime *rtd)
 	return 0;
 }
 
+struct apq8096_card_data {
+	/* MI2S ports whose bit and frame clocks come from the codec side */
+	DECLARE_BITMAP(mi2s_clk_consumer, LPASS_MAX_PORT);
+};
+
+static bool apq8096_is_mi2s(int id)
+{
+	return id >= PRIMARY_MI2S_RX && id <= QUATERNARY_MI2S_TX;
+}
+
+/* IBIT (internal) or EBIT (external) bit clock of an MI2S port */
+static int apq8096_mi2s_bit_clk(int id, bool external)
+{
+	return Q6AFE_LPASS_CLK_ID_PRI_MI2S_IBIT +
+	       ((id - PRIMARY_MI2S_RX) / 2) * 2 + (external ? 1 : 0);
+}
+
+static bool apq8096_mi2s_consumer(struct snd_soc_pcm_runtime *rtd)
+{
+	struct apq8096_card_data *data = snd_soc_card_get_drvdata(rtd->card);
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+
+	return test_bit(cpu_dai->id, data->mi2s_clk_consumer);
+}
+
+static int apq8096_mi2s_startup(struct snd_pcm_substream *substream)
+{
+	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+	unsigned int fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF;
+
+	fmt |= apq8096_mi2s_consumer(rtd) ? SND_SOC_DAIFMT_BC_FC :
+					    SND_SOC_DAIFMT_BP_FP;
+	return snd_soc_dai_set_fmt(cpu_dai, fmt);
+}
+
+static int apq8096_mi2s_hw_params(struct snd_pcm_substream *substream,
+				  struct snd_pcm_hw_params *params)
+{
+	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+	bool ext = apq8096_mi2s_consumer(rtd);
+
+	/*
+	 * Bit clock of 64 fs. For an external clock the rate is nominal:
+	 * the DSP only gates it, but enables it only with a rate.
+	 */
+	return snd_soc_dai_set_sysclk(cpu_dai,
+				      apq8096_mi2s_bit_clk(cpu_dai->id, ext),
+				      params_rate(params) * 64,
+				      SNDRV_PCM_STREAM_PLAYBACK);
+}
+
+static void apq8096_mi2s_shutdown(struct snd_pcm_substream *substream)
+{
+	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+	bool ext = apq8096_mi2s_consumer(rtd);
+
+	snd_soc_dai_set_sysclk(cpu_dai, apq8096_mi2s_bit_clk(cpu_dai->id, ext),
+			       0, SNDRV_PCM_STREAM_PLAYBACK);
+}
+
+static const struct snd_soc_ops apq8096_mi2s_ops = {
+	.startup = apq8096_mi2s_startup,
+	.hw_params = apq8096_mi2s_hw_params,
+	.shutdown = apq8096_mi2s_shutdown,
+};
+
 static void apq8096_add_be_ops(struct snd_soc_card *card)
 {
+	struct apq8096_card_data *data = snd_soc_card_get_drvdata(card);
 	struct snd_soc_dai_link *link;
-	int i;
+	struct device_node *np;
+	int i = 0;
 
-	for_each_card_prelinks(card, i, link) {
-		if (link->no_pcm == 1) {
-			link->be_hw_params_fixup = apq8096_be_hw_params_fixup;
+	/* the links are in the order of the available child nodes */
+	for_each_available_child_of_node(card->dev->of_node, np) {
+		if (i >= card->num_links)
+			break;
+		link = &card->dai_link[i++];
+
+		if (link->no_pcm != 1)
+			continue;
+
+		link->be_hw_params_fixup = apq8096_be_hw_params_fixup;
+		if (apq8096_is_mi2s(link->id)) {
+			/* "qcom,mi2s-clock-consumer": the codec side drives BCLK/WS */
+			if (of_property_read_bool(np, "qcom,mi2s-clock-consumer"))
+				set_bit(link->id, data->mi2s_clk_consumer);
+			link->ops = &apq8096_mi2s_ops;
+		} else {
 			link->init = apq8096_init;
 			link->ops = &apq8096_ops;
 		}
@@ -104,6 +191,7 @@ static void apq8096_add_be_ops(struct snd_soc_card *card)
 
 static int apq8096_platform_probe(struct platform_device *pdev)
 {
+	struct apq8096_card_data *data;
 	struct snd_soc_card *card;
 	struct device *dev = &pdev->dev;
 	int ret;
@@ -111,6 +199,11 @@ static int apq8096_platform_probe(struct platform_device *pdev)
 	card = devm_kzalloc(dev, sizeof(*card), GFP_KERNEL);
 	if (!card)
 		return -ENOMEM;
+
+	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
+	snd_soc_card_set_drvdata(card, data);
 
 	card->driver_name = "apq8096";
 	card->dev = dev;

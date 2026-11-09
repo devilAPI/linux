@@ -487,6 +487,14 @@ config REGULATOR_HI6421V600
 	  HiSilicon Hi6421v600 PMU / Codec IC.
 	  This is used on Kirin 3670 boards, like HiKey 970.
 
+config REGULATOR_ISL98608
+	tristate "Intersil ISL98608 audio supply"
+	depends on I2C
+	select REGMAP_I2C
+	help
+	  The ISL98608 as a switchable supply for an audio output stage
+	  (enable GPIO plus a fixed I2C configuration).
+
 config REGULATOR_ISL9305
 	tristate "Intersil ISL9305 regulator"
 	depends on I2C
