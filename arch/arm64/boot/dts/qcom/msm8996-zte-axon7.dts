@@ -748,6 +748,67 @@
 	};
 };
 
+/*
+ * AK4961 main codec (speaker, earpiece, microphones, headset). ZTE runs it
+ * in "SLIMbus + SPI" mode: registers over SPI on BLSP2 QUP3 (CIF1 low),
+ * audio data and the port arrays over SLIMbus.
+ */
+&soc {
+	blsp2_spi3: spi@75b7000 {
+		compatible = "qcom,spi-qup-v2.2.1";
+		reg = <0x075b7000 0x600>;
+		interrupts = <GIC_SPI 103 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&gcc GCC_BLSP2_QUP3_SPI_APPS_CLK>,
+			 <&gcc GCC_BLSP2_AHB_CLK>;
+		clock-names = "core", "iface";
+		dmas = <&blsp2_dma 16>, <&blsp2_dma 17>;
+		dma-names = "tx", "rx";
+		pinctrl-names = "default";
+		pinctrl-0 = <&blsp2_spi3_default>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		ak4961_spi: codec@0 {
+			compatible = "asahi-kasei,ak4961-spi";
+			reg = <0>;
+			spi-max-frequency = <9600000>;
+		};
+	};
+};
+
+&slim_msm {
+	status = "okay";
+
+	slim@1 {
+		reg = <1>;
+		#address-cells = <2>;
+		#size-cells = <0>;
+
+		ak4961_ifd: ifd@0,0 {
+			compatible = "slim1dd,4961";
+			reg = <0 0>;
+		};
+
+		ak4961: codec@2,0 {
+			compatible = "slim1dd,4961";
+			reg = <2 0>;
+
+			slim-ifc-dev = <&ak4961_ifd>;
+			akm,spi = <&ak4961_spi>;
+
+			clocks = <&divclk1_cdc>;
+			clock-names = "mclk";
+
+			ldo-gpios = <&tlmm 63 GPIO_ACTIVE_HIGH>;
+			cif-gpios = <&tlmm 62 GPIO_ACTIVE_HIGH>;
+			reset-gpios = <&tlmm 64 GPIO_ACTIVE_LOW>;
+
+			pinctrl-names = "default";
+			pinctrl-0 = <&ak4961_default>;
+		};
+	};
+};
+
 &q6afedai {
 	dai@22 {
 		reg = <QUATERNARY_MI2S_RX>;
@@ -1224,6 +1285,31 @@
 		drive-strength = <2>;
 		bias-disable;
 		output-high;
+	};
+
+	/* AK4961 control port (BLSP2 QUP3 SPI, ZTE spi_9) */
+	blsp2_spi3_default: blsp2-spi3-default-state {
+		pins = "gpio49", "gpio50", "gpio51", "gpio52";
+		function = "blsp_spi9";
+		drive-strength = <6>;
+		bias-disable;
+	};
+
+	/* AK4961: CIF1 62, LDO 63, reset 64, interrupt 54 */
+	ak4961_default: ak4961-default-state {
+		ctrl-pins {
+			pins = "gpio62", "gpio63", "gpio64";
+			function = "gpio";
+			drive-strength = <16>;
+			bias-disable;
+		};
+
+		irq-pins {
+			pins = "gpio54";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-up;
+		};
 	};
 
 	/* Quaternary MI2S: SCK 58, WS 59 (both from the AK8157), SD1 61 */
