@@ -60,6 +60,7 @@ struct tfa989x {
 	const struct tfa989x_rev *rev;
 	struct regulator *vddd_supply;
 	struct gpio_desc *rcv_gpiod;
+	bool rcv_on;
 };
 
 static bool tfa989x_writeable_reg(struct device *dev, unsigned int reg)
@@ -119,6 +120,39 @@ static const struct snd_kcontrol_new tfa989x_mode_controls[] = {
 	SOC_ENUM_EXT("Mode", mode_enum, snd_soc_get_enum_double, tfa989x_put_mode),
 };
 
+/*
+ * Other revisions: rcv-gpios is a board switch that routes the speaker as
+ * an earpiece (e.g. ZTE Axon 7, TFA9890); the amplifier is not changed.
+ */
+static int tfa989x_get_rcv_switch(struct snd_kcontrol *kcontrol,
+				  struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct tfa989x *tfa989x = snd_soc_component_get_drvdata(component);
+
+	ucontrol->value.integer.value[0] = tfa989x->rcv_on;
+	return 0;
+}
+
+static int tfa989x_put_rcv_switch(struct snd_kcontrol *kcontrol,
+				  struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct tfa989x *tfa989x = snd_soc_component_get_drvdata(component);
+	bool on = ucontrol->value.integer.value[0];
+
+	if (on == tfa989x->rcv_on)
+		return 0;
+	tfa989x->rcv_on = on;
+	gpiod_set_value_cansleep(tfa989x->rcv_gpiod, on);
+	return 1;
+}
+
+static const struct snd_kcontrol_new tfa989x_rcv_switch_controls[] = {
+	SOC_SINGLE_BOOL_EXT("Receiver Switch", 0, tfa989x_get_rcv_switch,
+			    tfa989x_put_rcv_switch),
+};
+
 static int tfa989x_probe(struct snd_soc_component *component)
 {
 	struct tfa989x *tfa989x = snd_soc_component_get_drvdata(component);
@@ -126,6 +160,10 @@ static int tfa989x_probe(struct snd_soc_component *component)
 	if (tfa989x->rev->rev == TFA9897_REVISION)
 		return snd_soc_add_component_controls(component, tfa989x_mode_controls,
 						      ARRAY_SIZE(tfa989x_mode_controls));
+
+	if (tfa989x->rcv_gpiod)
+		return snd_soc_add_component_controls(component, tfa989x_rcv_switch_controls,
+						      ARRAY_SIZE(tfa989x_rcv_switch_controls));
 
 	return 0;
 }
@@ -341,11 +379,9 @@ static int tfa989x_i2c_probe(struct i2c_client *i2c)
 		return dev_err_probe(dev, PTR_ERR(tfa989x->vddd_supply),
 				     "Failed to get vddd regulator\n");
 
-	if (tfa989x->rev->rev == TFA9897_REVISION) {
-		tfa989x->rcv_gpiod = devm_gpiod_get_optional(dev, "rcv", GPIOD_OUT_LOW);
-		if (IS_ERR(tfa989x->rcv_gpiod))
-			return PTR_ERR(tfa989x->rcv_gpiod);
-	}
+	tfa989x->rcv_gpiod = devm_gpiod_get_optional(dev, "rcv", GPIOD_OUT_LOW);
+	if (IS_ERR(tfa989x->rcv_gpiod))
+		return PTR_ERR(tfa989x->rcv_gpiod);
 
 	regmap = devm_regmap_init_i2c(i2c, &tfa989x_regmap);
 	if (IS_ERR(regmap))
