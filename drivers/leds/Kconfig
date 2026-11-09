@@ -1044,6 +1044,20 @@ config LEDS_ACER_A500
 
 source "drivers/leds/blink/Kconfig"
 
+config LEDS_QCOM_PMI8994_TORCH
+	tristate "Torch mode of the Qualcomm PMI8994/PMI8996 flash LED module"
+	depends on LEDS_CLASS
+	depends on MFD_SPMI_PMIC || COMPILE_TEST
+	depends on OF
+	select REGMAP
+	help
+	  Torch (continuous light) mode of the flash LED module in the
+	  Qualcomm PMI8994 and PMI8996 PMICs, as one LED class device for
+	  both LEDs. Flash strobes are not supported.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called leds-qcom-pmi8994-torch.
+
 comment "Flash and Torch LED drivers"
 source "drivers/leds/flash/Kconfig"
 

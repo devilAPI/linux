@@ -674,6 +674,16 @@
 	status = "okay";
 };
 
+/* rear dual-tone flash, torch mode */
+&pmi8994_flash {
+	status = "okay";
+
+	led {
+		function = LED_FUNCTION_TORCH;
+		color = <LED_COLOR_ID_WHITE>;
+	};
+};
+
 &pmi8994_gpios {
 	typec_vreg_default: typec-vreg-state {
 		/* GPIO 8: VCONN 5 V regulator enable, GPIO 9: HD3SS3220 3.3 V */
