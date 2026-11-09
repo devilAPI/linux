@@ -123,6 +123,14 @@
 		pinctrl-0 = <&divclk4_pin_a>;
 	};
 
+	/* ZTE P996A01, 3250 mAh, float voltage 4.4 V (zte_p996a01_3250mah.dtsi) */
+	battery: battery {
+		compatible = "simple-battery";
+		charge-full-design-microamp-hours = <3250000>;
+		voltage-min-design-microvolt = <3400000>;
+		voltage-max-design-microvolt = <4400000>;
+	};
+
 	gpio-keys {
 		compatible = "gpio-keys";
 
@@ -652,6 +660,12 @@
 };
 
 /* Notification LED, downstream qpnp RGB (ids 3/4/5 = R/G/B) */
+&pmi8994_fg {
+	/* read-only: no charger driver yet, so no "power-supplies" */
+	monitored-battery = <&battery>;
+	status = "okay";
+};
+
 &pmi8994_gpios {
 	typec_vreg_default: typec-vreg-state {
 		/* GPIO 8: VCONN 5 V regulator enable, GPIO 9: HD3SS3220 3.3 V */
