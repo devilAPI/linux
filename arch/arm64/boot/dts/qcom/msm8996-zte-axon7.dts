@@ -14,6 +14,8 @@
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/leds/common.h>
 #include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
+#include <dt-bindings/sound/qcom,q6asm.h>
+#include <dt-bindings/sound/qcom,q6dsp-lpass-ports.h>
 #include "msm8996.dtsi"
 #include "pm8994.dtsi"
 #include "pmi8994.dtsi"
@@ -121,6 +123,15 @@
 
 		pinctrl-names = "default";
 		pinctrl-0 = <&divclk4_pin_a>;
+	};
+
+	hifi_ldo: hifi-ldo-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "hifi_ldo";
+		gpio = <&tlmm 93 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		pinctrl-names = "default";
+		pinctrl-0 = <&hifi_ldo_default>;
 	};
 
 	/* ZTE P996A01, 3250 mAh, float voltage 4.4 V (zte_p996a01_3250mah.dtsi) */
@@ -559,6 +570,15 @@
 };
 
 &pm8994_gpios {
+	/* Hi-Fi: AK8157 clock generator reset (GPIO 1, and GPIO 12 as in ZTE's tree) */
+	ak8157_reset_default: ak8157-reset-state {
+		pins = "gpio1", "gpio12";
+		function = PMIC_GPIO_FUNC_NORMAL;
+		output-low;
+		bias-disable;
+		power-source = <PM8994_GPIO_S4>;
+	};
+
 	vol_keys_default: vol-keys-state {
 		pins = "gpio2", "gpio3";
 		function = PMIC_GPIO_FUNC_NORMAL;
@@ -619,6 +639,22 @@
 };
 
 &pm8994_mpps {
+	/* Hi-Fi: ISL54405 headphone switch select, MPP 2 (0 = AK4490, 1 = AK4961) */
+	hph_sel_default: hph-sel-state {
+		pins = "mpp2";
+		function = "digital";
+		output-low;
+		power-source = <2>;
+	};
+
+	/* Hi-Fi: ISL54405 mute, MPP 4 (1 = muted) */
+	hph_mute_default: hph-mute-state {
+		pins = "mpp4";
+		function = "digital";
+		output-high;
+		power-source = <2>;
+	};
+
 	typec_en_default: typec-en-state {
 		/* MPP 5: EN_CC / USB 3.0 mux, MPP 7: SS re-driver; enabled high */
 		pins = "mpp5", "mpp7";
@@ -660,6 +696,106 @@
 };
 
 /* Notification LED, downstream qpnp RGB (ids 3/4/5 = R/G/B) */
+/*
+ * Hi-Fi headphone path (ZTE's msm-3.18 tree): AK4490 DAC and ISL98608
+ * supply on BLSP1 QUP3, AK8157 clock generator (the I2S clock provider)
+ * on BLSP1 QUP6, Quaternary MI2S from the ADSP, and an ISL54405 switch
+ * that connects the jack to the AK4490 (or to the AK4961, which has no
+ * driver yet, so the switch stays on the AK4490).
+ */
+&blsp1_i2c3 {
+	status = "okay";
+
+	hifi_dac: audio-codec@10 {
+		compatible = "asahi-kasei,ak4490";
+		reg = <0x10>;
+		#sound-dai-cells = <0>;
+
+		dvdd-supply = <&hifi_ldo>;
+		avdd-supply = <&hifi_avdd>;
+		pdn-gpios = <&pmi8994_gpios 1 GPIO_ACTIVE_LOW>;
+		/* ISL54405 mute, high = muted */
+		mute-gpios = <&pm8994_mpps 4 GPIO_ACTIVE_HIGH>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&ak4490_pdn_default &hph_mute_default &hph_sel_default
+			     &hph_switch_power_default &hifi_pop_default>;
+	};
+
+	hifi_avdd: regulator@29 {
+		compatible = "isil,isl98608";
+		reg = <0x29>;
+		regulator-name = "hifi_avdd";
+		enable-gpios = <&pmi8994_mpps 4 GPIO_ACTIVE_HIGH>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&isl98608_en_default>;
+	};
+};
+
+&blsp1_i2c6 {
+	status = "okay";
+
+	hifi_clk: clock-generator@11 {
+		compatible = "asahi-kasei,ak8157";
+		reg = <0x11>;
+		#sound-dai-cells = <0>;
+		reset-gpios = <&pm8994_gpios 1 GPIO_ACTIVE_LOW>,
+			      <&pm8994_gpios 12 GPIO_ACTIVE_LOW>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&ak8157_reset_default>;
+	};
+};
+
+&q6afedai {
+	dai@22 {
+		reg = <QUATERNARY_MI2S_RX>;
+		/* ZTE: qcom,msm-mi2s-rx-lines = <2> (bit 1, SD1 on TLMM 61) */
+		qcom,sd-lines = <1>;
+	};
+};
+
+&q6asmdai {
+	dai@0 {
+		reg = <MSM_FRONTEND_DAI_MULTIMEDIA1>;
+	};
+};
+
+&sound {
+	compatible = "qcom,apq8096-sndcard";
+	model = "ZTE Axon 7";
+
+	pinctrl-names = "default";
+	pinctrl-0 = <&quat_mi2s_default>;
+
+	mm1-dai-link {
+		link-name = "MultiMedia1";
+
+		cpu {
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
+		};
+	};
+
+	hifi-dai-link {
+		link-name = "Hi-Fi Headphones";
+		/* BCLK and WS come from the AK8157 */
+		qcom,mi2s-clock-consumer;
+
+		cpu {
+			sound-dai = <&q6afedai QUATERNARY_MI2S_RX>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+
+		codec {
+			sound-dai = <&hifi_dac>, <&hifi_clk>;
+		};
+	};
+};
+
 &pmi8994_fg {
 	/* read-only: no charger driver yet, so no "power-supplies" */
 	monitored-battery = <&battery>;
@@ -684,7 +820,34 @@
 	};
 };
 
+&pmi8994_mpps {
+	/* Hi-Fi: ISL98608 supply enable (MPP 4) */
+	isl98608_en_default: isl98608-en-state {
+		pins = "mpp4";
+		function = "digital";
+		output-low;
+		power-source = <2>;
+	};
+};
+
 &pmi8994_gpios {
+	/* Hi-Fi: AK4490 PDN (GPIO 1), ISL54405 switch power (GPIO 10) */
+	ak4490_pdn_default: ak4490-pdn-state {
+		pins = "gpio1";
+		function = PMIC_GPIO_FUNC_NORMAL;
+		output-low;
+		bias-disable;
+		power-source = <PM8994_GPIO_S4>;
+	};
+
+	hph_switch_power_default: hph-switch-power-state {
+		pins = "gpio10";
+		function = PMIC_GPIO_FUNC_NORMAL;
+		output-high;
+		bias-disable;
+		power-source = <PM8994_GPIO_S4>;
+	};
+
 	typec_vreg_default: typec-vreg-state {
 		/* GPIO 8: VCONN 5 V regulator enable, GPIO 9: HD3SS3220 3.3 V */
 		pins = "gpio8", "gpio9";
@@ -1043,6 +1206,31 @@
 		pins = "gpio124";
 		function = "gpio";
 		drive-strength = <2>;
+		bias-disable;
+	};
+
+	/* Hi-Fi: AK4490 LDO enable */
+	hifi_ldo_default: hifi-ldo-default-state {
+		pins = "gpio93";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	/* Hi-Fi: output anti-pop switch, high while the Hi-Fi path is used (ZTE) */
+	hifi_pop_default: hifi-pop-default-state {
+		pins = "gpio74";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+		output-high;
+	};
+
+	/* Quaternary MI2S: SCK 58, WS 59 (both from the AK8157), SD1 61 */
+	quat_mi2s_default: quat-mi2s-default-state {
+		pins = "gpio58", "gpio59", "gpio61";
+		function = "qua_mi2s";
+		drive-strength = <8>;
 		bias-disable;
 	};
 
