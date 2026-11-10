@@ -259,6 +259,10 @@ static SOC_ENUM_SINGLE_DECL(ak4961_mic1l_input_enum, AK4961_MIC_INPUT_SELECTOR_1
 			    ak4961_mic_input_text);
 static const struct snd_kcontrol_new ak4961_mic1l_input_mux =
 	SOC_DAPM_ENUM("Mic_1L input Selector", ak4961_mic1l_input_enum);
+static SOC_ENUM_SINGLE_DECL(ak4961_mic1r_input_enum, AK4961_MIC_INPUT_SELECTOR_1, 4,
+			    ak4961_mic_input_text);
+static const struct snd_kcontrol_new ak4961_mic1r_input_mux =
+	SOC_DAPM_ENUM("Mic_1R input Selector", ak4961_mic1r_input_enum);
 
 static const char * const ak4961_sync_domain_text[] = {
 	"n/a", "aif1", "aif2", "aif3", "aif4", "dsp24k", "dsp16k", "slimbus",
@@ -285,6 +289,8 @@ static const struct snd_kcontrol_new ak4961_controls[] = {
 	SOC_ENUM("CP1 Clock Mode", ak4961_cp1_clock_enum),
 	SOC_SINGLE_TLV("MIC Gain 1L", AK4961_MIC_AMP_1_LCH_GAIN, 0, 10, 0,
 		       ak4961_mic_gain_tlv),
+	SOC_SINGLE_TLV("MIC Gain 1R", AK4961_MIC_AMP_1_LCH_GAIN + 1, 0, 10, 0,
+		       ak4961_mic_gain_tlv),
 };
 
 static const struct snd_soc_dapm_widget ak4961_dapm_widgets[] = {
@@ -305,6 +311,15 @@ static const struct snd_soc_dapm_widget ak4961_dapm_widgets[] = {
 	SND_SOC_DAPM_MUX("Mic_1L input Selector", SND_SOC_NOPM, 0, 0,
 			 &ak4961_mic1l_input_mux),
 	SND_SOC_DAPM_ADC("ADC_1L", NULL, AK4961_POWER_MANAGEMENT_6, 0, 0),
+
+	/* microphone 2 (AIN2, MPWR1B bias) on the right channel of ADC1 */
+	SND_SOC_DAPM_INPUT("AIN2"),
+	SND_SOC_DAPM_SUPPLY("PMMP1B", AK4961_POWER_MANAGEMENT_4, 1, 0,
+			    ak4961_micbias_event, SND_SOC_DAPM_POST_PMU),
+	SND_SOC_DAPM_PGA("PMAIN2", AK4961_POWER_MANAGEMENT_5, 1, 0, NULL, 0),
+	SND_SOC_DAPM_MUX("Mic_1R input Selector", SND_SOC_NOPM, 0, 0,
+			 &ak4961_mic1r_input_mux),
+	SND_SOC_DAPM_ADC("ADC_1R", NULL, AK4961_POWER_MANAGEMENT_6, 1, 0),
 	SND_SOC_DAPM_MUX("SBO1L Source Selector", SND_SOC_NOPM, 0, 0,
 			 &ak4961_sbo1l_source_mux),
 	SND_SOC_DAPM_AIF_OUT("SB1 CAP", "AIF1 Capture", 0, SND_SOC_NOPM, 0, 0),
@@ -322,6 +337,15 @@ static const struct snd_soc_dapm_route ak4961_dapm_routes[] = {
 	{ "ADC_1L", NULL, "Mic_1L input Selector" },
 	{ "ADC_1L", NULL, "Charge Pump1" },
 	{ "SBO1L Source Selector", "ADC1", "ADC_1L" },
+	/* SBO1 is one stereo source: ADC1 gives ADC_1L on TX7, ADC_1R on TX8 */
+	{ "PMMP1B", NULL, "Charge Pump1" },
+	{ "PMAIN2", NULL, "AIN2" },
+	/* ZTE: AIN2 PMMP Selector = MPWR1B */
+	{ "PMAIN2", NULL, "PMMP1B" },
+	{ "Mic_1R input Selector", "AIN2", "PMAIN2" },
+	{ "ADC_1R", NULL, "Mic_1R input Selector" },
+	{ "ADC_1R", NULL, "Charge Pump1" },
+	{ "SBO1L Source Selector", "ADC1", "ADC_1R" },
 	{ "SB1 CAP", NULL, "SBO1L Source Selector" },
 	{ "SB1 CAP", NULL, "PLL CLK" },
 };
