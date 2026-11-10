@@ -12,7 +12,6 @@
 #include <linux/iio/buffer.h>
 #include <linux/iio/common/qcom_smgr.h>
 #include <linux/iio/iio.h>
-#include <linux/iio/kfifo_buf.h>
 
 static int smgr_motion_read_raw(struct iio_dev *iio_dev,
 				struct iio_chan_spec const *chan, int *val,
@@ -21,6 +20,13 @@ static int smgr_motion_read_raw(struct iio_dev *iio_dev,
 	struct smgr_iio_priv *priv = iio_priv(iio_dev);
 
 	switch (mask) {
+	case IIO_CHAN_INFO_RAW:
+		/* newest report: proximity count, or lux in Q16 */
+		if (chan->type == IIO_PROXIMITY)
+			*val = priv->sensor->last[SNS_SMGR_DATA_TYPE_PRIMARY][1];
+		else
+			*val = priv->sensor->last[SNS_SMGR_DATA_TYPE_SECONDARY][0];
+		return IIO_VAL_INT;
 	case IIO_CHAN_INFO_SAMP_FREQ:
 		*val = priv->sensor->data_types[0].cur_sample_rate;
 		return IIO_VAL_INT;
@@ -159,7 +165,8 @@ static const struct iio_chan_spec smgr_prox_light_channels[] = {
 			.storagebits = 32,
 			.endianness = IIO_LE,
 		},
-		.info_mask_separate = BIT(IIO_CHAN_INFO_SCALE),
+		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW) |
+				      BIT(IIO_CHAN_INFO_SCALE),
 		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 		.info_mask_shared_by_all_available = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 	},
@@ -172,7 +179,8 @@ static const struct iio_chan_spec smgr_prox_light_channels[] = {
 			.storagebits = 32,
 			.endianness = IIO_LE,
 		},
-		.info_mask_separate = BIT(IIO_CHAN_INFO_SCALE),
+		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW) |
+				      BIT(IIO_CHAN_INFO_SCALE),
 		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 		.info_mask_shared_by_all_available = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 	},
@@ -235,12 +243,28 @@ static int smgr_motion_probe(struct platform_device *pdev)
 	iio_dev->channels = variant->channels;
 	iio_dev->num_channels = variant->num_channels;
 
-	ret = devm_iio_kfifo_buffer_setup(&pdev->dev, iio_dev,
-					  &smgr_buffer_ops);
+	ret = smgr_iio_setup(&pdev->dev, iio_dev, priv->sensor);
 	if (ret)
 		return dev_err_probe(&pdev->dev, ret, "failed to set up buffer\n");
 
-	return devm_iio_device_register(&pdev->dev, iio_dev);
+	ret = devm_iio_device_register(&pdev->dev, iio_dev);
+	if (ret)
+		return ret;
+
+	if (variant == &smgr_prox_light_variant) {
+		struct smgr_sensor *sensor = priv->sensor;
+		unsigned int i;
+
+		/* report continuously, slowly, for sysfs readers */
+		for (i = 0; i < sensor->data_type_count; i++)
+			sensor->data_types[i].cur_sample_rate =
+				min_t(u16, 10, sensor->data_types[i].max_sample_rate);
+		ret = smgr_sensor_set_always_on(iio_dev, true);
+		if (ret)
+			dev_warn(&pdev->dev, "cannot start reporting: %d\n", ret);
+	}
+
+	return 0;
 }
 
 static void smgr_motion_remove(struct platform_device *pdev)
@@ -248,6 +272,12 @@ static void smgr_motion_remove(struct platform_device *pdev)
 	struct iio_dev *iio_dev = platform_get_drvdata(pdev);
 	struct smgr_iio_priv *priv = iio_priv(iio_dev);
 
+	/*
+	 * No QMI request here: this also runs while the core is going away.
+	 * Reports that still arrive are dropped (no IIO device).
+	 */
+	priv->sensor->always_on = false;
+	priv->sensor->trig = NULL;
 	priv->sensor->iio_dev = NULL;
 }
 

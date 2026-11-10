@@ -10,7 +10,6 @@
 #include <linux/iio/buffer.h>
 #include <linux/iio/common/qcom_smgr.h>
 #include <linux/iio/iio.h>
-#include <linux/iio/kfifo_buf.h>
 
 static int smgr_accel_read_raw(struct iio_dev *iio_dev,
 			       struct iio_chan_spec const *chan, int *val,
@@ -190,8 +189,7 @@ static int smgr_accel_probe(struct platform_device *pdev)
 	iio_dev->channels = smgr_accel_iio_channels;
 	iio_dev->num_channels = ARRAY_SIZE(smgr_accel_iio_channels);
 
-	ret = devm_iio_kfifo_buffer_setup(&pdev->dev, iio_dev,
-					  &smgr_buffer_ops);
+	ret = smgr_iio_setup(&pdev->dev, iio_dev, priv->sensor);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to setup buffer: %pe\n",
 			ERR_PTR(ret));
@@ -213,6 +211,7 @@ static void smgr_accel_remove(struct platform_device *pdev)
 	struct iio_dev *iio_dev = platform_get_drvdata(pdev);
 	struct smgr_iio_priv *priv = iio_priv(iio_dev);
 
+	priv->sensor->trig = NULL;
 	priv->sensor->iio_dev = NULL;
 }
 

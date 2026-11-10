@@ -9,6 +9,8 @@ config IIO_QCOM_SMGR
 	depends on QCOM_RPROC_COMMON
 	select QCOM_QMI_HELPERS
 	select IIO_BUFFER
+	select IIO_TRIGGER
+	select IIO_TRIGGERED_BUFFER
 	help
 	  Say yes here to build core support for the Sensor Manager (SMGR)
 	  service provided by the Qualcomm Snapdragon Sensor Core (SSC).
