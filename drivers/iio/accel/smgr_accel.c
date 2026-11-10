@@ -67,15 +67,17 @@ static int smgr_accel_read_avail(struct iio_dev *iio_dev,
 				 long mask)
 {
 	struct smgr_iio_priv *priv = iio_priv(iio_dev);
-	const int samp_freq_vals[3] = {
-		1, 1, priv->sensor->data_types[0].max_sample_rate
-	};
 
 	switch (mask) {
 	case IIO_CHAN_INFO_SAMP_FREQ:
+		/* not on the stack: the caller reads it after we return */
+		priv->samp_freq_avail[0] = 1;
+		priv->samp_freq_avail[1] = 1;
+		priv->samp_freq_avail[2] =
+			priv->sensor->data_types[0].max_sample_rate;
 		*type = IIO_VAL_INT;
-		*vals = samp_freq_vals;
-		*length = ARRAY_SIZE(samp_freq_vals);
+		*vals = priv->samp_freq_avail;
+		*length = ARRAY_SIZE(priv->samp_freq_avail);
 		return IIO_AVAIL_RANGE;
 	}
 
@@ -181,6 +183,7 @@ static int smgr_accel_probe(struct platform_device *pdev)
 	priv = iio_priv(iio_dev);
 	priv->sensor = *(struct smgr_sensor **)pdev->dev.platform_data;
 	priv->sensor->iio_dev = iio_dev;
+	platform_set_drvdata(pdev, iio_dev);	/* for smgr_accel_remove() */
 
 	iio_dev->name = "qcom-smgr-accel";
 	iio_dev->info = &smgr_accel_iio_info;
