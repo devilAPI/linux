@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Qualcomm Sensor Manager gyroscope and magnetometer driver
+ * Qualcomm Sensor Manager gyroscope, magnetometer and proximity/light driver
  *
  * Both report three axes of primary data in Q16 fixed point: rad/s for
  * the gyroscope and gauss for the magnetometer (the IIO base units), so
@@ -25,6 +25,10 @@ static int smgr_motion_read_raw(struct iio_dev *iio_dev,
 		*val = priv->sensor->data_types[0].cur_sample_rate;
 		return IIO_VAL_INT;
 	case IIO_CHAN_INFO_SCALE:
+		if (chan->type == IIO_PROXIMITY) {
+			*val = 1;	/* raw count */
+			return IIO_VAL_INT;
+		}
 		*val = 1;
 		*val2 = 16;	/* Q16 */
 		return IIO_VAL_FRACTIONAL_LOG2;
@@ -144,6 +148,47 @@ static const struct iio_chan_spec smgr_mag_channels[] = {
 	SMGR_MOTION_TIMESTAMP,
 };
 
+/* proximity count (higher = closer) and illuminance in lux, Q16 */
+static const struct iio_chan_spec smgr_prox_light_channels[] = {
+	{
+		.type = IIO_PROXIMITY,
+		.scan_index = 0,
+		.scan_type = {
+			.sign = 's',
+			.realbits = 32,
+			.storagebits = 32,
+			.endianness = IIO_LE,
+		},
+		.info_mask_separate = BIT(IIO_CHAN_INFO_SCALE),
+		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
+		.info_mask_shared_by_all_available = BIT(IIO_CHAN_INFO_SAMP_FREQ),
+	},
+	{
+		.type = IIO_LIGHT,
+		.scan_index = 1,
+		.scan_type = {
+			.sign = 's',
+			.realbits = 32,
+			.storagebits = 32,
+			.endianness = IIO_LE,
+		},
+		.info_mask_separate = BIT(IIO_CHAN_INFO_SCALE),
+		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
+		.info_mask_shared_by_all_available = BIT(IIO_CHAN_INFO_SAMP_FREQ),
+	},
+	{
+		.type = IIO_TIMESTAMP,
+		.channel = -1,
+		.scan_index = 2,
+		.scan_type = {
+			.sign = 'u',
+			.realbits = 32,
+			.storagebits = 64,
+			.endianness = IIO_LE,
+		},
+	},
+};
+
 struct smgr_motion_variant {
 	const char *name;
 	const struct iio_chan_spec *channels;
@@ -160,6 +205,12 @@ static const struct smgr_motion_variant smgr_mag_variant = {
 	.name = "qcom-smgr-mag",
 	.channels = smgr_mag_channels,
 	.num_channels = ARRAY_SIZE(smgr_mag_channels),
+};
+
+static const struct smgr_motion_variant smgr_prox_light_variant = {
+	.name = "qcom-smgr-prox-light",
+	.channels = smgr_prox_light_channels,
+	.num_channels = ARRAY_SIZE(smgr_prox_light_channels),
 };
 
 static int smgr_motion_probe(struct platform_device *pdev)
@@ -203,6 +254,7 @@ static void smgr_motion_remove(struct platform_device *pdev)
 static const struct platform_device_id smgr_motion_ids[] = {
 	{ .name = "qcom-smgr-gyro", .driver_data = (kernel_ulong_t)&smgr_gyro_variant },
 	{ .name = "qcom-smgr-mag", .driver_data = (kernel_ulong_t)&smgr_mag_variant },
+	{ .name = "qcom-smgr-prox-light", .driver_data = (kernel_ulong_t)&smgr_prox_light_variant },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(platform, smgr_motion_ids);
@@ -217,5 +269,5 @@ static struct platform_driver smgr_motion_driver = {
 };
 module_platform_driver(smgr_motion_driver);
 
-MODULE_DESCRIPTION("Qualcomm Sensor Manager gyroscope and magnetometer driver");
+MODULE_DESCRIPTION("Qualcomm Sensor Manager gyroscope, magnetometer and proximity/light driver");
 MODULE_LICENSE("GPL");
