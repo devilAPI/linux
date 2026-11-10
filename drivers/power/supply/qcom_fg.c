@@ -882,12 +882,18 @@ static int qcom_fg_get_property(struct power_supply *psy,
 		ret = chip->ops->get_voltage(chip, &val->intval);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN:
+		if (!chip->batt_info)
+			return -ENODATA;
 		val->intval = chip->batt_info->voltage_min_design_uv;
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
+		if (!chip->batt_info)
+			return -ENODATA;
 		val->intval = chip->batt_info->voltage_max_design_uv;
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
+		if (!chip->batt_info)
+			return -ENODATA;
 		val->intval = chip->batt_info->charge_full_design_uah;
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
@@ -1188,26 +1194,16 @@ static int qcom_fg_probe(struct platform_device *pdev)
 				     "Charger supply not registered yet\n");
 	}
 
-	supply_config.drv_data = chip;
-	supply_config.fwnode = dev_fwnode(&pdev->dev);
-
-	chip->batt_psy = devm_power_supply_register(chip->dev,
-			&batt_psy_desc, &supply_config);
-	if (IS_ERR(chip->batt_psy)) {
-		dev_err(&pdev->dev, "Failed to register battery\n");
-		return PTR_ERR(chip->batt_psy);
-	}
-
-	platform_set_drvdata(pdev, chip);
-
-	ret = power_supply_get_battery_info(chip->batt_psy, &chip->batt_info);
-	if (ret) {
-		dev_err(&pdev->dev, "Failed to get battery info: %d\n", ret);
-		return ret;
-	}
-
-	/* Initialize SRAM if available */
+	/*
+	 * Initialize SRAM access before the battery supply is registered:
+	 * a charger that is already there reports a change at once, and
+	 * get_property() then reads SRAM.
+	 */
 	if (chip->sram_regs) {
+		spin_lock_init(&chip->sram_request_lock);
+		spin_lock_init(&chip->sram_rw_lock);
+		chip->sram_requests = 0;
+
 		irq = of_irq_get_byname(pdev->dev.of_node, "mem-avail");
 		if (irq < 0) {
 			dev_err(&pdev->dev, "Failed to get irq mem-avail byname: %d\n",
@@ -1229,11 +1225,26 @@ static int qcom_fg_probe(struct platform_device *pdev)
 			dev_err(&pdev->dev, "Failed to request mem-avail IRQ: %d\n", ret);
 			return ret;
 		}
-
-		spin_lock_init(&chip->sram_request_lock);
-		spin_lock_init(&chip->sram_rw_lock);
-		chip->sram_requests = 0;
 	}
+
+	supply_config.drv_data = chip;
+	supply_config.fwnode = dev_fwnode(&pdev->dev);
+
+	chip->batt_psy = devm_power_supply_register(chip->dev,
+			&batt_psy_desc, &supply_config);
+	if (IS_ERR(chip->batt_psy)) {
+		dev_err(&pdev->dev, "Failed to register battery\n");
+		return PTR_ERR(chip->batt_psy);
+	}
+
+	platform_set_drvdata(pdev, chip);
+
+	ret = power_supply_get_battery_info(chip->batt_psy, &chip->batt_info);
+	if (ret) {
+		dev_err(&pdev->dev, "Failed to get battery info: %d\n", ret);
+		return ret;
+	}
+
 
 	/*
 	 * Set default temperature thresholds. They steer the charger
