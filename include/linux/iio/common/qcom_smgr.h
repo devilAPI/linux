@@ -41,6 +41,8 @@ struct smgr_sensor
 	struct smgr_data_type_item *data_types;
 
 	struct iio_dev *iio_dev;
+	/* newest sample of each data type */
+	s32 last[SNS_SMGR_DATA_TYPE_COUNT][3];
 };
 
 struct smgr_iio_priv

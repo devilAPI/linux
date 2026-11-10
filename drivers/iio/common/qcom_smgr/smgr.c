@@ -210,6 +210,16 @@ static int smgr_request_buffering(struct smgr *smgr, struct smgr_sensor *sensor,
 		req.items[0].sampling_rate =
 			sensor->data_types[0].cur_sample_rate;
 
+		/* proximity/light: the light level is the secondary data type */
+		if (sensor->type == SNS_SMGR_SENSOR_TYPE_PROX_LIGHT &&
+		    sensor->data_type_count > 1) {
+			req.item_len = 2;
+			req.items[1] = req.items[0];
+			req.items[1].data_type = SNS_SMGR_DATA_TYPE_SECONDARY;
+			req.items[1].sampling_rate =
+				sensor->data_types[1].cur_sample_rate;
+		}
+
 		dev_dbg(smgr->dev,
 			"Requesting buffering for sensor 0x%02x, report rate: %d, sample rate: %d",
 			req.items[0].sensor_id, req.report_rate,
@@ -251,6 +261,58 @@ static int smgr_request_buffering(struct smgr *smgr, struct smgr_sensor *sensor,
 	return 0;
 }
 
+/*
+ * A report carries one index entry per requested item (data type): the
+ * newest sample of each goes to the sensor's last values. Sensors with
+ * one data type push their primary sample; the proximity/light sensor
+ * pushes primary (proximity) and secondary (light) together.
+ */
+static void smgr_report_sensor(struct smgr *smgr, struct smgr_sensor *sensor,
+			       const struct sns_smgr_buffering_report_ind *ind)
+{
+	const struct sns_smgr_buffering_report_index *idx;
+	unsigned int k, n;
+	u32 ts = 0;
+	struct {
+		s32 values[3];
+		aligned_s64 timestamp;	/* room for the IIO timestamp */
+	} scan = { };
+
+	for (k = 0; k < ind->indices_len && k < ARRAY_SIZE(ind->indices); k++) {
+		idx = &ind->indices[k];
+		if (idx->sensor_id != sensor->id || !idx->sample_count ||
+		    idx->data_type >= SNS_SMGR_DATA_TYPE_COUNT)
+			continue;
+		n = idx->first_sample_idx + idx->sample_count - 1;
+		if (n >= ind->samples_len)
+			continue;
+		memcpy(sensor->last[idx->data_type], ind->samples[n].values,
+		       sizeof(sensor->last[0]));
+		ts = idx->first_sample_timestamp;
+		dev_vdbg(smgr->dev, "0x%02x,%u: %d %d %d (%u samples)\n",
+			 sensor->id, idx->data_type, sensor->last[idx->data_type][0],
+			 sensor->last[idx->data_type][1],
+			 sensor->last[idx->data_type][2], idx->sample_count);
+	}
+
+	if (!sensor->iio_dev)
+		return;
+
+	if (sensor->type == SNS_SMGR_SENSOR_TYPE_PROX_LIGHT) {
+		/*
+		 * RPR0521 (ZTE Axon 7): primary = proximity (near flag,
+		 * raw count, threshold in Q16), secondary = light (lux in
+		 * Q16, two raw ADC counts). Push the proximity count and lux.
+		 */
+		scan.values[0] = sensor->last[SNS_SMGR_DATA_TYPE_PRIMARY][1];
+		scan.values[1] = sensor->last[SNS_SMGR_DATA_TYPE_SECONDARY][0];
+	} else {
+		memcpy(scan.values, sensor->last[SNS_SMGR_DATA_TYPE_PRIMARY],
+		       sizeof(scan.values));
+	}
+	iio_push_to_buffers_with_ts(sensor->iio_dev, &scan, sizeof(scan), ts);
+}
+
 static void smgr_buffering_report_handler(struct qmi_handle *hdl,
 					  struct sockaddr_qrtr *sq,
 					  struct qmi_txn *txn, const void *data)
@@ -267,11 +329,7 @@ static void smgr_buffering_report_handler(struct qmi_handle *hdl,
 		if (sensor->id != ind->report_id)
 			continue;
 
-		// TODO: handle multiple samples
-		iio_push_to_buffers_with_timestamp(sensor->iio_dev,
-						   ind->samples[0].values,
-						   ind->metadata.timestamp);
-
+		smgr_report_sensor(smgr, sensor, ind);
 		break;
 	}
 }
@@ -360,8 +418,8 @@ static int smgr_probe(struct platform_device *pdev)
 
 		for (j = 0; j < smgr->sensors[i].data_type_count; j++) {
 			/* Default to maximum sample rate */
-			smgr->sensors[i].data_types->cur_sample_rate =
-				smgr->sensors[i].data_types->max_sample_rate;
+			smgr->sensors[i].data_types[j].cur_sample_rate =
+				smgr->sensors[i].data_types[j].max_sample_rate;
 
 			dev_dbg(smgr->dev, "0x%02x,%d: %s %s\n",
 				smgr->sensors[i].id, j,

@@ -538,43 +538,48 @@ const struct qmi_elem_info sns_smgr_buffering_resp_ei[] = {
 };
 EXPORT_SYMBOL_GPL(sns_smgr_buffering_resp_ei);
 
-static const struct qmi_elem_info sns_smgr_buffering_report_metadata_ei[] = {
+static const struct qmi_elem_info sns_smgr_buffering_report_index_ei[] = {
 	{
-		.data_type = QMI_UNSIGNED_4_BYTE,
+		.data_type = QMI_UNSIGNED_1_BYTE,
 		.elem_len = 1,
-		.elem_size = sizeof_field(
-			struct sns_smgr_buffering_report_metadata, val1),
+		.elem_size = sizeof_field(struct sns_smgr_buffering_report_index, sensor_id),
 		.array_type = NO_ARRAY,
-		.offset = offsetof(struct sns_smgr_buffering_report_metadata,
-				   val1),
+		.offset = offsetof(struct sns_smgr_buffering_report_index, sensor_id),
 	},
 	{
 		.data_type = QMI_UNSIGNED_1_BYTE,
 		.elem_len = 1,
-		.elem_size =
-			sizeof_field(struct sns_smgr_buffering_report_metadata,
-				     sample_count),
+		.elem_size = sizeof_field(struct sns_smgr_buffering_report_index, data_type),
 		.array_type = NO_ARRAY,
-		.offset = offsetof(struct sns_smgr_buffering_report_metadata,
-				   sample_count),
+		.offset = offsetof(struct sns_smgr_buffering_report_index, data_type),
+	},
+	{
+		.data_type = QMI_UNSIGNED_1_BYTE,
+		.elem_len = 1,
+		.elem_size = sizeof_field(struct sns_smgr_buffering_report_index, first_sample_idx),
+		.array_type = NO_ARRAY,
+		.offset = offsetof(struct sns_smgr_buffering_report_index, first_sample_idx),
+	},
+	{
+		.data_type = QMI_UNSIGNED_1_BYTE,
+		.elem_len = 1,
+		.elem_size = sizeof_field(struct sns_smgr_buffering_report_index, sample_count),
+		.array_type = NO_ARRAY,
+		.offset = offsetof(struct sns_smgr_buffering_report_index, sample_count),
 	},
 	{
 		.data_type = QMI_UNSIGNED_4_BYTE,
 		.elem_len = 1,
-		.elem_size = sizeof_field(
-			struct sns_smgr_buffering_report_metadata, timestamp),
+		.elem_size = sizeof_field(struct sns_smgr_buffering_report_index, first_sample_timestamp),
 		.array_type = NO_ARRAY,
-		.offset = offsetof(struct sns_smgr_buffering_report_metadata,
-				   timestamp),
+		.offset = offsetof(struct sns_smgr_buffering_report_index, first_sample_timestamp),
 	},
 	{
 		.data_type = QMI_UNSIGNED_4_BYTE,
 		.elem_len = 1,
-		.elem_size = sizeof_field(
-			struct sns_smgr_buffering_report_metadata, val2),
+		.elem_size = sizeof_field(struct sns_smgr_buffering_report_index, sampling_rate),
 		.array_type = NO_ARRAY,
-		.offset = offsetof(struct sns_smgr_buffering_report_metadata,
-				   val2),
+		.offset = offsetof(struct sns_smgr_buffering_report_index, sampling_rate),
 	},
 	{
 		.data_type = QMI_EOTI,
@@ -634,15 +639,23 @@ const struct qmi_elem_info sns_smgr_buffering_report_ind_ei[] = {
 				   report_id),
 	},
 	{
-		.data_type = QMI_STRUCT,
+		.data_type = QMI_DATA_LEN,
 		.elem_len = 1,
-		.elem_size = sizeof_field(struct sns_smgr_buffering_report_ind,
-					  metadata),
+		.elem_size = sizeof(u8),
 		.array_type = NO_ARRAY,
 		.tlv_type = 0x02,
 		.offset = offsetof(struct sns_smgr_buffering_report_ind,
-				   metadata),
-		.ei_array = sns_smgr_buffering_report_metadata_ei,
+				   indices_len),
+	},
+	{
+		.data_type = QMI_STRUCT,
+		.elem_len = SNS_SMGR_DATA_TYPE_COUNT,
+		.elem_size = sizeof(struct sns_smgr_buffering_report_index),
+		.array_type = VAR_LEN_ARRAY,
+		.tlv_type = 0x02,
+		.offset = offsetof(struct sns_smgr_buffering_report_ind,
+				   indices),
+		.ei_array = sns_smgr_buffering_report_index_ei,
 	},
 	{
 		.data_type = QMI_DATA_LEN,
