@@ -15,3 +15,13 @@ config IIO_QCOM_SMGR
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called smgr.
+
+config IIO_QCOM_SMGR_MOTION
+	tristate "Qualcomm SSC Sensor Manager gyroscope and magnetometer"
+	depends on IIO_QCOM_SMGR
+	select IIO_BUFFER
+	select IIO_KFIFO_BUF
+	help
+	  Say yes here to get support for gyroscopes and magnetometers
+	  connected to a Qualcomm Snapdragon Sensor Core and accessed
+	  through its Sensor Manager service.
