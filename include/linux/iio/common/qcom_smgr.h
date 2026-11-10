@@ -43,6 +43,17 @@ struct smgr_sensor
 	struct iio_dev *iio_dev;
 	/* newest sample of each data type */
 	s32 last[SNS_SMGR_DATA_TYPE_COUNT][3];
+
+	/* fired for every report; the scan it pushes */
+	struct iio_trigger *trig;
+	struct {
+		s32 values[3];
+		aligned_s64 timestamp;
+	} scan;
+	s64 scan_ts;
+
+	/* reporting without an enabled buffer, for sysfs reads */
+	bool always_on;
 };
 
 struct smgr_iio_priv
@@ -52,5 +63,11 @@ struct smgr_iio_priv
 };
 
 extern struct iio_buffer_setup_ops smgr_buffer_ops;
+
+struct device;
+struct iio_dev;
+int smgr_iio_setup(struct device *dev, struct iio_dev *iio_dev,
+		   struct smgr_sensor *sensor);
+int smgr_sensor_set_always_on(struct iio_dev *iio_dev, bool on);
 
 #endif /* __QCOM_SMGR_H__ */
