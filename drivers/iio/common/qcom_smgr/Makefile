@@ -6,3 +6,4 @@
 obj-y += qmi/
 
 obj-$(CONFIG_IIO_QCOM_SMGR)	+= smgr.o
+obj-$(CONFIG_IIO_QCOM_SMGR_MOTION)	+= smgr_motion.o
