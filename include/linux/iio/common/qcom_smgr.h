@@ -46,6 +46,7 @@ struct smgr_sensor
 struct smgr_iio_priv
 {
 	struct smgr_sensor *sensor;
+	int samp_freq_avail[3];		/* min, step, max for read_avail */
 };
 
 extern struct iio_buffer_setup_ops smgr_buffer_ops;
