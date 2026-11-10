@@ -320,6 +320,12 @@ static const struct snd_soc_dapm_widget ak4961_dapm_widgets[] = {
 	SND_SOC_DAPM_MUX("Mic_1R input Selector", SND_SOC_NOPM, 0, 0,
 			 &ak4961_mic1r_input_mux),
 	SND_SOC_DAPM_ADC("ADC_1R", NULL, AK4961_POWER_MANAGEMENT_6, 1, 0),
+
+	/* headset microphone (AIN4, MPWR2 bias), ZTE headset-mic: on Mic_1L */
+	SND_SOC_DAPM_INPUT("AIN4"),
+	SND_SOC_DAPM_SUPPLY("PMMP2", AK4961_POWER_MANAGEMENT_4, 3, 0,
+			    ak4961_micbias_event, SND_SOC_DAPM_POST_PMU),
+	SND_SOC_DAPM_PGA("PMAIN4", AK4961_POWER_MANAGEMENT_5, 3, 0, NULL, 0),
 	SND_SOC_DAPM_MUX("SBO1L Source Selector", SND_SOC_NOPM, 0, 0,
 			 &ak4961_sbo1l_source_mux),
 	SND_SOC_DAPM_AIF_OUT("SB1 CAP", "AIF1 Capture", 0, SND_SOC_NOPM, 0, 0),
@@ -346,6 +352,11 @@ static const struct snd_soc_dapm_route ak4961_dapm_routes[] = {
 	{ "ADC_1R", NULL, "Mic_1R input Selector" },
 	{ "ADC_1R", NULL, "Charge Pump1" },
 	{ "SBO1L Source Selector", "ADC1", "ADC_1R" },
+	{ "PMMP2", NULL, "Charge Pump1" },
+	{ "PMAIN4", NULL, "AIN4" },
+	/* ZTE: AIN4 PMMP Selector = MPWR2 */
+	{ "PMAIN4", NULL, "PMMP2" },
+	{ "Mic_1L input Selector", "AIN4", "PMAIN4" },
 	{ "SB1 CAP", NULL, "SBO1L Source Selector" },
 	{ "SB1 CAP", NULL, "PLL CLK" },
 };
