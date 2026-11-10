@@ -51,6 +51,24 @@ static const struct ak73xx_chipdef ak7345_cdef = {
 	.power_delay_us	= 20000,
 };
 
+/*
+ * AK7371: 10 bit position, MSB in 0x00 and the low bits on top of 0x01,
+ * CONT 0x02 = 0x00 for active as in ZTE's libactuator_ak7371.so (Axon 7).
+ * Standby isn't used: the driver cuts the supplies instead.
+ */
+static const struct ak73xx_chipdef ak7371_cdef = {
+	.reg_position	= 0x0,
+	.reg_cont	= 0x2,
+	.shift_pos	= 6,	/* 10 bits position values, need to << 6 */
+	.mode_active	= 0x0,
+	.has_standby	= false,
+	.focus_pos_max	= 1023,
+	.focus_steps	= 1,
+	.ctrl_steps	= 32,
+	.ctrl_delay_us	= 1000,
+	.power_delay_us	= 10000,
+};
+
 static const struct ak73xx_chipdef ak7375_cdef = {
 	.reg_position	= 0x0,
 	.reg_cont	= 0x2,
@@ -330,6 +348,7 @@ static int __maybe_unused ak7375_vcm_resume(struct device *dev)
 
 static const struct of_device_id ak7375_of_table[] = {
 	{ .compatible = "asahi-kasei,ak7345", .data = &ak7345_cdef, },
+	{ .compatible = "asahi-kasei,ak7371", .data = &ak7371_cdef, },
 	{ .compatible = "asahi-kasei,ak7375", .data = &ak7375_cdef, },
 	{ /* sentinel */ }
 };
