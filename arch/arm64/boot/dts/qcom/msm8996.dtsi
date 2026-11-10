@@ -3736,6 +3736,13 @@
 			#clock-cells = <0>;
 		};
 
+		watchdog@9830000 {
+			compatible = "qcom,apss-wdt-msm8996", "qcom,kpss-wdt";
+			reg = <0x09830000 0x1000>;
+			clocks = <&sleep_clk>;
+			interrupts = <GIC_SPI 28 IRQ_TYPE_EDGE_RISING>;
+		};
+
 		timer@9840000 {
 			#address-cells = <1>;
 			#size-cells = <1>;
