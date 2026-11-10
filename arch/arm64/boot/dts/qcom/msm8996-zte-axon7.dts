@@ -582,6 +582,16 @@
 	alloc-ranges = <0x0 0xa0000000 0x0 0x20000000>;
 };
 
+/*
+ * Sensor DSP: accelerometer, gyroscope, compass, light/proximity are all
+ * on the SLPI (ZTE: sensors.ssc.so over QMI), none on the apps side.
+ */
+&slpi_pil {
+	status = "okay";
+	firmware-name = "qcom/msm8996/zte/axon7/slpi.mbn";
+	px-supply = <&vreg_lvs2a_1p8>;
+};
+
 &mss_pil {
 	status = "okay";
 
