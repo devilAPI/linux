@@ -959,6 +959,16 @@
 	compatible = "qcom,apq8096-sndcard";
 	model = "ZTE Axon 7";
 
+	/*
+	 * One widget per speaker, so each can be switched off on its own
+	 * (earpiece = top speaker through the receiver switch, bottom off).
+	 */
+	widgets = "Speaker", "Bottom Speaker",
+		  "Speaker", "Top Speaker";
+	audio-routing = "Bottom Speaker", "Speaker Bottom OUT",
+			"Top Speaker", "Speaker Top OUT";
+	pin-switches = "Bottom Speaker", "Top Speaker";
+
 	pinctrl-names = "default";
 	pinctrl-0 = <&quat_mi2s_default>;
 
