@@ -7,6 +7,7 @@
 #include <sound/soc-dapm.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
+#include <sound/jack.h>
 #include <dt-bindings/sound/qcom,q6dsp-lpass-ports.h>
 #include "common.h"
 #include "qdsp6/q6afe.h"
@@ -66,6 +67,8 @@ static const struct snd_soc_ops apq8096_ops = {
 	.hw_params = msm_snd_hw_params,
 };
 
+static int apq8096_jack_setup(struct snd_soc_pcm_runtime *rtd);
+
 static int apq8096_init(struct snd_soc_pcm_runtime *rtd)
 {
 	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
@@ -88,13 +91,41 @@ static int apq8096_init(struct snd_soc_pcm_runtime *rtd)
 	snd_soc_dai_set_sysclk(codec_dai, 0, WCD9335_DEFAULT_MCLK_RATE,
 				SNDRV_PCM_STREAM_PLAYBACK);
 
-	return 0;
+	return apq8096_jack_setup(rtd);
 }
 
 struct apq8096_card_data {
 	/* MI2S ports whose bit and frame clocks come from the codec side */
 	DECLARE_BITMAP(mi2s_clk_consumer, LPASS_MAX_PORT);
+	struct snd_soc_jack jack;
+	bool jack_setup;
 };
+
+static struct snd_soc_jack_pin apq8096_jack_pins[] = {
+	{ .pin = "Headphone Jack", .mask = SND_JACK_HEADPHONE },
+	{ .pin = "Mic Jack", .mask = SND_JACK_MICROPHONE },
+};
+
+/* a headset jack for codecs that detect one (AK4961 on the ZTE Axon 7) */
+static int apq8096_jack_setup(struct snd_soc_pcm_runtime *rtd)
+{
+	struct apq8096_card_data *data = snd_soc_card_get_drvdata(rtd->card);
+	struct snd_soc_component *component = snd_soc_rtd_to_codec(rtd, 0)->component;
+	int ret;
+
+	if (data->jack_setup || !component->driver->set_jack)
+		return 0;
+
+	ret = snd_soc_card_jack_new_pins(rtd->card, "Headset Jack",
+					 SND_JACK_HEADSET, &data->jack,
+					 apq8096_jack_pins,
+					 ARRAY_SIZE(apq8096_jack_pins));
+	if (ret)
+		return ret;
+	data->jack_setup = true;
+
+	return snd_soc_component_set_jack(component, &data->jack, NULL);
+}
 
 static bool apq8096_is_mi2s(int id)
 {

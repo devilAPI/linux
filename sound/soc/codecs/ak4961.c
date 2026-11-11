@@ -29,8 +29,10 @@
 #include <linux/spi/spi.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
+#include <sound/jack.h>
 #include <sound/soc-dapm.h>
 #include <sound/tlv.h>
+#include <linux/workqueue.h>
 
 #define AK4961_DEVICE_CODE		0x00d5
 #define AK4961_DEVICE_CODE_VAL		0x61
@@ -65,6 +67,22 @@
 #define AK4961_MIC_AMP_1_LCH_GAIN	0x0010
 #define AK4961_CHARGE_PUMP_1_SETTING_1	0x0016
 #define AK4961_MIC_INPUT_SELECTOR_1	0x0034
+
+/*
+ * Jack detection (ZTE ak4961_jde_irq): JDS says a plug is in; the mic
+ * detector (MICDET in DETECTION_POWER_MANAGEMENT) then sets MDS when the
+ * plug has a microphone ring. ZTE takes 5 MDS hits in a row as a headset
+ * and 9 detection rounds without one as headphones; with a headset MPWR
+ * stays on (mic bias for the headset mic and its buttons).
+ */
+#define AK4961_DETECTION_PM		0x0031
+#define AK4961_DET_MPWR			BIT(6)
+#define AK4961_DET_MICDET		BIT(3)
+#define AK4961_JACK_DET_STATUS		0x00d8
+#define AK4961_JDS			BIT(1)
+#define AK4961_MDS			BIT(7)
+#define AK4961_MIC_HITS			5
+#define AK4961_MIC_TRIES		9
 
 /* SLIMbus TX: SLIM TX1.. are PGD ports 0..; SB1 capture uses TX7/TX8 (ZTE) */
 #define AK4961_TX_PORT_SB1		6
@@ -136,6 +154,11 @@ struct ak4961_priv {
 	unsigned int tx_ch[AK4961_MAX_TX_CH];
 	unsigned int num_tx_ch;
 	struct ak4961_dai_data dai[AK4961_NUM_DAIS];
+
+	struct snd_soc_jack *jack;
+	struct delayed_work jack_work;
+	int jack_report;
+	unsigned int mic_tries, mic_hits;
 };
 
 static int ak4961_spi_reg_read(void *context, unsigned int reg, unsigned int *val)
@@ -543,7 +566,87 @@ static struct snd_soc_dai_driver ak4961_dais[] = {
 	},
 };
 
+/*
+ * The codec interrupt (TLMM 54) is not used yet: its polarity is unclear
+ * (the line reads low with no event pending), so the status is polled,
+ * every 500 ms while nothing changes and every 100 ms while the mic
+ * detector decides.
+ */
+static void ak4961_jack_work(struct work_struct *work)
+{
+	struct ak4961_priv *ak = container_of(to_delayed_work(work),
+					      struct ak4961_priv, jack_work);
+	unsigned long next = msecs_to_jiffies(500);
+	int report = ak->jack_report;
+	unsigned int st;
+
+	if (regmap_read(ak->regmap, AK4961_JACK_DET_STATUS, &st))
+		goto out;
+
+	if (!(st & AK4961_JDS)) {
+		if (ak->jack_report || ak->mic_tries)
+			regmap_update_bits(ak->regmap, AK4961_DETECTION_PM,
+					   AK4961_DET_MPWR | AK4961_DET_MICDET, 0);
+		report = 0;
+		ak->mic_tries = 0;
+		ak->mic_hits = 0;
+	} else if (!ak->jack_report) {
+		if (!ak->mic_tries)
+			regmap_update_bits(ak->regmap, AK4961_DETECTION_PM,
+					   AK4961_DET_MICDET, AK4961_DET_MICDET);
+		ak->mic_tries++;
+		ak->mic_hits = (st & AK4961_MDS) ? ak->mic_hits + 1 : 0;
+
+		if (ak->mic_hits >= AK4961_MIC_HITS) {
+			report = SND_JACK_HEADSET;
+			regmap_update_bits(ak->regmap, AK4961_DETECTION_PM,
+					   AK4961_DET_MPWR | AK4961_DET_MICDET,
+					   AK4961_DET_MPWR);
+		} else if (ak->mic_tries > AK4961_MIC_TRIES + AK4961_MIC_HITS) {
+			report = SND_JACK_HEADPHONE;
+			regmap_update_bits(ak->regmap, AK4961_DETECTION_PM,
+					   AK4961_DET_MICDET, 0);
+		} else {
+			next = msecs_to_jiffies(100);
+		}
+	}
+
+	if (report != ak->jack_report) {
+		dev_info(ak->dev, "jack: %s (status %#x)\n",
+			 report == SND_JACK_HEADSET ? "headset" :
+			 report ? "headphones" : "unplugged", st);
+		ak->jack_report = report;
+		snd_soc_jack_report(ak->jack, report, SND_JACK_HEADSET);
+	}
+out:
+	schedule_delayed_work(&ak->jack_work, next);
+}
+
+static int ak4961_set_jack(struct snd_soc_component *component,
+			   struct snd_soc_jack *jack, void *data)
+{
+	struct ak4961_priv *ak = snd_soc_component_get_drvdata(component);
+
+	cancel_delayed_work_sync(&ak->jack_work);
+	ak->jack = jack;
+	ak->jack_report = 0;
+	ak->mic_tries = 0;
+	ak->mic_hits = 0;
+	if (jack)
+		schedule_delayed_work(&ak->jack_work, 0);
+	return 0;
+}
+
+static void ak4961_component_remove(struct snd_soc_component *component)
+{
+	struct ak4961_priv *ak = snd_soc_component_get_drvdata(component);
+
+	cancel_delayed_work_sync(&ak->jack_work);
+}
+
 static const struct snd_soc_component_driver ak4961_component = {
+	.remove = ak4961_component_remove,
+	.set_jack = ak4961_set_jack,
 	.name = "ak4961",
 	.controls = ak4961_controls,
 	.num_controls = ARRAY_SIZE(ak4961_controls),
@@ -642,6 +745,7 @@ static int ak4961_slim_probe(struct slim_device *sdev)
 		return -ENOMEM;
 	ak->dev = dev;
 	ak->slim = sdev;
+	INIT_DELAYED_WORK(&ak->jack_work, ak4961_jack_work);
 
 	spi_np = of_parse_phandle(dev->of_node, "akm,spi", 0);
 	if (!spi_np)
