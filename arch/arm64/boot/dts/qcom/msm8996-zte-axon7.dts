@@ -455,6 +455,16 @@
 			touchscreen-x-mm = <68>;
 			touchscreen-y-mm = <121>;
 		};
+
+		/*
+		 * Capacitive keys under the screen, 0D buttons of the touch
+		 * controller in ZTE's order (synaptics,cap-button-codes:
+		 * back, home, app switch).
+		 */
+		rmi4-f1a@1a {
+			reg = <0x1a>;
+			linux,keycodes = <KEY_BACK KEY_HOMEPAGE KEY_APPSELECT>;
+		};
 	};
 
 	/* ndt,stress-i2c pressure sensor @50: no mainline driver */
