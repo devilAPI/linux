@@ -78,6 +78,17 @@ static int qcom_pon_probe(struct platform_device *pdev)
 			dev_err(&pdev->dev, "can't register reboot mode\n");
 			return error;
 		}
+
+		/*
+		 * The bootloader has acted on the reason by now. A reboot
+		 * without a mode writes nothing, so a stale "recovery" would
+		 * send every later plain reboot to recovery again (seen on the
+		 * ZTE Axon 7, whose bootloader does not clear it; downstream
+		 * kernels write 0 on a normal reboot). Clear it.
+		 */
+		regmap_update_bits(pon->regmap,
+				   pon->baseaddr + PON_SOFT_RB_SPARE,
+				   GENMASK(7, reason_shift), 0);
 	}
 
 	platform_set_drvdata(pdev, pon);
