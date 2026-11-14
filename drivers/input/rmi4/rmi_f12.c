@@ -269,8 +269,17 @@ static irqreturn_t rmi_f12_attention(int irq, void *ctx)
 		drvdata->attn_data.data += valid_bytes;
 		drvdata->attn_data.size -= valid_bytes;
 	} else {
+		/*
+		 * Only the object data (Data1) is used. Registers after it can
+		 * be large (1658 bytes in all on the S3718 of the ZTE Axon 7:
+		 * 153 ms per report at 100 kHz), so do not read past it.
+		 */
+		if (f12->data1)
+			valid_bytes = min_t(u32, sensor->pkt_size,
+					    f12->data1_offset + f12->data1->reg_size);
+
 		retval = rmi_read_block(rmi_dev, f12->data_addr,
-					sensor->data_pkt, sensor->pkt_size);
+					sensor->data_pkt, valid_bytes);
 		if (retval < 0) {
 			dev_err(&fn->dev, "Failed to read object data. Code: %d.\n",
 				retval);
