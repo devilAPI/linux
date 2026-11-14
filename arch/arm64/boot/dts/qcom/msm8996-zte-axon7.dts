@@ -421,6 +421,8 @@
 };
 
 &blsp2_i2c6 {
+	/* touchscreen bus: 400 kHz as downstream (qcom,clk-freq-out) */
+	clock-frequency = <400000>;
 	status = "okay";
 
 	/* Synaptics DSX (S3320-class) */
