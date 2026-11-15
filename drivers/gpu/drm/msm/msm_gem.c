@@ -53,6 +53,7 @@ static void put_iova_spaces(struct drm_gem_object *obj, struct drm_gpuvm *vm,
 static void msm_gem_close(struct drm_gem_object *obj, struct drm_file *file)
 {
 	struct msm_context *ctx = file->driver_priv;
+	struct msm_drm_private *priv = obj->dev->dev_private;
 	struct drm_exec exec;
 
 	update_ctx_mem(file, -obj->size);
@@ -72,6 +73,19 @@ static void msm_gem_close(struct drm_gem_object *obj, struct drm_file *file)
 	 * is closed (see msm_gem_vm_close())
 	 */
 	if (msm_context_is_vmbind(ctx))
+		return;
+
+	/*
+	 * Without per-process page tables (a5xx and older) every context
+	 * shares the GPU's global VM, and a shared buffer (dma-buf, e.g. an
+	 * Android gralloc buffer imported by several processes) has a single
+	 * VMA there. Tearing it down because one process closed its handle
+	 * unmaps the iova that the other processes still put in their command
+	 * streams (userspace keeps the iova from MSM_INFO_GET_IOVA, there are
+	 * no relocs). msm_gem_vma_put() tears it down instead, once the last
+	 * handle or dma-buf export is gone.
+	 */
+	if (ctx->vm == priv->gpu->vm)
 		return;
 
 	/*
@@ -101,6 +115,21 @@ void msm_gem_vma_put(struct drm_gem_object *obj)
 
 	if (atomic_dec_return(&to_msm_bo(obj)->vma_ref))
 		return;
+
+	/*
+	 * No handle and no dma-buf left: drop the object's VMA in the GPU's
+	 * global VM too (see msm_gem_close()). The VMA holds a reference to
+	 * the object, so without this it would never be freed.
+	 */
+	if (priv->gpu && priv->gpu->vm) {
+		struct drm_exec gexec;
+
+		dma_resv_wait_timeout(obj->resv, DMA_RESV_USAGE_BOOKKEEP, false,
+				      MAX_SCHEDULE_TIMEOUT);
+		msm_gem_lock_vm_and_obj(&gexec, obj, priv->gpu->vm);
+		put_iova_spaces(obj, priv->gpu->vm, true, "vma_put");
+		drm_exec_fini(&gexec);
+	}
 
 	if (!priv->kms)
 		return;
