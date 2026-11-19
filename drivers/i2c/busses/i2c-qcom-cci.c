@@ -475,6 +475,11 @@ static int __maybe_unused cci_suspend_runtime(struct device *dev)
 {
 	struct cci *cci = dev_get_drvdata(dev);
 
+	/*
+	 * No interrupt while the clocks are off: cci_isr() reads the status
+	 * register, and that read raises an SError on an unclocked CCI.
+	 */
+	disable_irq(cci->irq);
 	cci_disable_clocks(cci);
 	return 0;
 }
@@ -489,6 +494,7 @@ static int __maybe_unused cci_resume_runtime(struct device *dev)
 		return ret;
 
 	cci_init(cci);
+	enable_irq(cci->irq);
 	return 0;
 }
 
