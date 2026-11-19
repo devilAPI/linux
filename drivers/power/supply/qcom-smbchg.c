@@ -10,6 +10,7 @@
 #include <linux/extcon-provider.h>
 #include <linux/fwnode.h>
 #include <linux/interrupt.h>
+#include <linux/pm_wakeup.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of.h>
@@ -895,6 +896,17 @@ static void smbchg_extcon_update(struct smbchg_chip *chip)
 				    (union extcon_property_value) false);
 	}
 
+	/*
+	 * Stay out of system suspend while a cable is plugged in, as the
+	 * downstream charger driver did: charging needs AICL and the
+	 * charge state machine, and USB device mode does not survive a
+	 * suspend with the gadget connected.
+	 */
+	if (usb_present)
+		pm_stay_awake(chip->dev);
+	else
+		pm_relax(chip->dev);
+
 	/* Sync all extcon cables */
 	extcon_sync(chip->edev, EXTCON_USB);
 	extcon_sync(chip->edev, EXTCON_USB_HOST);
@@ -1652,6 +1664,9 @@ static int smbchg_probe(struct platform_device *pdev)
 		return ret;
 
 	/* Request IRQs */
+	/* plugging in a charger wakes the system (usbin-src-det below) */
+	device_init_wakeup(chip->dev, true);
+
 	for (i = 0; i < ARRAY_SIZE(smbchg_irqs); ++i) {
 		/* IRQ unused */
 		if (!smbchg_irqs[i].handler)
@@ -1673,9 +1688,16 @@ static int smbchg_probe(struct platform_device *pdev)
 				smbchg_irqs[i].name, ERR_PTR(irq));
 			return ret;
 		}
+
+		if (!strcmp(smbchg_irqs[i].name, "usbin-src-det"))
+			enable_irq_wake(irq);
 	}
 
 	platform_set_drvdata(pdev, chip);
+
+	/* a cable plugged in before probe: no source detect interrupt yet */
+	if (smbchg_usb_is_present(chip))
+		pm_stay_awake(chip->dev);
 
 	return 0;
 }
