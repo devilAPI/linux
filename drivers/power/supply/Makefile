@@ -137,3 +137,4 @@ obj-$(CONFIG_MACSMC_POWER)	+= macsmc-power.o
 obj-$(CONFIG_CHARGER_MAX77759)	+= max77759_charger.o
 obj-$(CONFIG_BATTERY_QCOM_FG)	+= qcom_fg.o
 obj-$(CONFIG_CHARGER_QCOM_SMBCHG)	+= qcom-smbchg.o
+obj-$(CONFIG_CHARGER_SMB1351)	+= smb1351-charger.o

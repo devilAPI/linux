@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/power/supply/qcom,smb1351-parallel.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Summit/Qualcomm SMB1351 parallel charger
+
+maintainers:
+  - Felix <52862870+devilAPI@users.noreply.github.com>
+
+description:
+  The SMB1351 used as a parallel (secondary) charger next to a primary
+  charger such as the PMI8994/PMI8996 SMBCHG. It shares the USB input and
+  the battery with the primary charger and only charges on a dedicated
+  charging port while the battery is in its constant-current phase.
+
+allOf:
+  - $ref: power-supply.yaml#
+
+properties:
+  compatible:
+    const: qcom,smb1351-parallel
+
+  reg:
+    maxItems: 1
+
+  power-supplies:
+    maxItems: 1
+    description: the primary charger
+
+  qcom,fuel-gauge:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: power supply that reports the battery voltage and temperature
+
+  qcom,float-voltage-microvolt:
+    description: float voltage of the SMB1351, at most 4400000
+
+  qcom,max-charge-current-microamp:
+    description: fast charge current of the SMB1351, 1000000 to 1500000
+
+  qcom,min-input-current-microamp:
+    description: primary charger's input current limit needed before the
+      SMB1351 is enabled
+
+required:
+  - compatible
+  - reg
+  - power-supplies
+  - qcom,fuel-gauge
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        charger@1d {
+            compatible = "qcom,smb1351-parallel";
+            reg = <0x1d>;
+            power-supplies = <&smbchg>;
+            qcom,fuel-gauge = <&fg>;
+            qcom,float-voltage-microvolt = <4400000>;
+            qcom,max-charge-current-microamp = <1000000>;
+        };
+    };
