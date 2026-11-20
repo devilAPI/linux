@@ -556,6 +556,30 @@ static void _dpu_plane_setup_scaler(struct dpu_sw_pipe *pipe,
 	_dpu_plane_setup_pixel_ext(&scaler3_cfg, &pixel_ext,
 			src_width, src_height, info->hsub, info->vsub);
 
+	/*
+	 * QSEED2's bilinear and PCMN filters read one pixel past the right
+	 * and bottom edge of the source: repeat the edge pixel there (as the
+	 * MDP5 driver did) in each direction that goes through the scaler.
+	 */
+	if (test_bit(DPU_SSPP_SCALER_QSEED2, &pipe_hw->cap->features) &&
+	    scaler3_cfg.enable) {
+		bool yuv = MSM_FORMAT_IS_YUV(fmt);
+		bool scale_x = yuv || src_width != dst_width;
+		bool scale_y = yuv || src_height != dst_height;
+		int i;
+
+		for (i = 0; i < DPU_MAX_PLANES; i++) {
+			if (scale_x) {
+				pixel_ext.right_rpt[i] = 1;
+				pixel_ext.num_ext_pxls_right[i] = 1;
+			}
+			if (scale_y) {
+				pixel_ext.btm_rpt[i] = 1;
+				pixel_ext.num_ext_pxls_btm[i] = 1;
+			}
+		}
+	}
+
 	if (pipe_hw->ops.setup_pe)
 		pipe_hw->ops.setup_pe(pipe_hw,
 				&pixel_ext);

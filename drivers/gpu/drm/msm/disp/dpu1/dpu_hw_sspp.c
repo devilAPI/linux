@@ -370,6 +370,78 @@ void dpu_hw_setup_format_impl(struct dpu_sw_pipe *pipe, const struct msm_format 
 	DPU_REG_WRITE(c, ubwc_error_off, BIT(31));
 }
 
+/* QSEED2 SCALE_CONFIG fields (as MDP5_PIPE_SCALE_CONFIG) */
+#define QSEED2_SCALEX_EN			BIT(0)
+#define QSEED2_SCALEY_EN			BIT(1)
+#define QSEED2_SCALEX_FILTER_COMP_0(f)		((f) << 8)
+#define QSEED2_SCALEY_FILTER_COMP_0(f)		((f) << 10)
+#define QSEED2_SCALEX_FILTER_COMP_1_2(f)	((f) << 12)
+#define QSEED2_SCALEY_FILTER_COMP_1_2(f)	((f) << 14)
+#define QSEED2_SCALEX_FILTER_COMP_3(f)		((f) << 16)
+#define QSEED2_SCALEY_FILTER_COMP_3(f)		((f) << 18)
+#define QSEED2_FILTER_BIL			1
+#define QSEED2_FILTER_PCMN			2
+
+/*
+ * QSEED2 (VIG pipes of msm8996 and the msm89x7/8953 family), programmed as
+ * the MDP5 driver did: one phase step per direction for luma/alpha and one
+ * for chroma (21 fractional bits, as computed by _dpu_plane_setup_scaler3()),
+ * initial phase 0, bilinear filter for upscaling and PCMN for downscaling.
+ * YUV always goes through the scaler for chroma upsampling. The edge pixel
+ * repeat this needs is set up by the pixel extension (dpu_plane.c).
+ */
+static void dpu_hw_sspp_setup_scaler_qseed2(struct dpu_hw_sspp *ctx,
+		struct dpu_hw_scaler3_cfg *cfg, const struct msm_format *fmt)
+{
+	u32 base = ctx->cap->sblk->scaler_blk.base;
+	u32 config = 0;
+
+	if (cfg->enable && fmt) {
+		bool yuv = MSM_FORMAT_IS_YUV(fmt);
+		u32 sw = cfg->src_width[DPU_SSPP_COMP_0];
+		u32 sh = cfg->src_height[DPU_SSPP_COMP_0];
+		u32 cw = cfg->src_width[DPU_SSPP_COMP_1_2];
+		u32 ch = cfg->src_height[DPU_SSPP_COMP_1_2];
+		u32 dw = cfg->dst_width, dh = cfg->dst_height;
+		u32 ya, uv;
+
+		if (yuv || sw != dw) {
+			ya = sw <= dw ? QSEED2_FILTER_BIL : QSEED2_FILTER_PCMN;
+			uv = cw <= dw ? QSEED2_FILTER_BIL : QSEED2_FILTER_PCMN;
+			config |= QSEED2_SCALEX_EN |
+				  QSEED2_SCALEX_FILTER_COMP_0(ya) |
+				  QSEED2_SCALEX_FILTER_COMP_3(ya);
+			if (yuv)
+				config |= QSEED2_SCALEX_FILTER_COMP_1_2(uv);
+		}
+		if (yuv || sh != dh) {
+			ya = sh <= dh ? QSEED2_FILTER_BIL : QSEED2_FILTER_PCMN;
+			uv = ch <= dh ? QSEED2_FILTER_BIL : QSEED2_FILTER_PCMN;
+			config |= QSEED2_SCALEY_EN |
+				  QSEED2_SCALEY_FILTER_COMP_0(ya) |
+				  QSEED2_SCALEY_FILTER_COMP_3(ya);
+			if (yuv)
+				config |= QSEED2_SCALEY_FILTER_COMP_1_2(uv);
+		}
+
+		DPU_REG_WRITE(&ctx->hw, base + COMP0_3_PHASE_STEP_X,
+			      cfg->phase_step_x[DPU_SSPP_COMP_0]);
+		DPU_REG_WRITE(&ctx->hw, base + COMP0_3_PHASE_STEP_Y,
+			      cfg->phase_step_y[DPU_SSPP_COMP_0]);
+		DPU_REG_WRITE(&ctx->hw, base + COMP1_2_PHASE_STEP_X,
+			      cfg->phase_step_x[DPU_SSPP_COMP_1_2]);
+		DPU_REG_WRITE(&ctx->hw, base + COMP1_2_PHASE_STEP_Y,
+			      cfg->phase_step_y[DPU_SSPP_COMP_1_2]);
+		DPU_REG_WRITE(&ctx->hw, base + COMP0_3_INIT_PHASE_X, 0);
+		DPU_REG_WRITE(&ctx->hw, base + COMP0_3_INIT_PHASE_Y, 0);
+		DPU_REG_WRITE(&ctx->hw, base + COMP1_2_INIT_PHASE_X, 0);
+		DPU_REG_WRITE(&ctx->hw, base + COMP1_2_INIT_PHASE_Y, 0);
+		DPU_REG_WRITE(&ctx->hw, SSPP_DECIMATION_CONFIG, 0);
+	}
+
+	DPU_REG_WRITE(&ctx->hw, base + SCALE_CONFIG, config);
+}
+
 static void dpu_hw_sspp_setup_pe_config(struct dpu_hw_sspp *ctx,
 		struct dpu_hw_pixel_ext *pe_ext)
 {
@@ -652,6 +724,9 @@ static void _setup_layer_ops(struct dpu_hw_sspp *c,
 
 	if (test_bit(DPU_SSPP_SCALER_QSEED3_COMPATIBLE, &features))
 		c->ops.setup_scaler = dpu_hw_sspp_setup_scaler3;
+	else if (test_bit(DPU_SSPP_SCALER_QSEED2, &features) &&
+		 c->cap->sblk->scaler_blk.len)
+		c->ops.setup_scaler = dpu_hw_sspp_setup_scaler_qseed2;
 
 	if (test_bit(DPU_SSPP_CDP, &features))
 		c->ops.setup_cdp = dpu_hw_sspp_setup_cdp;
