@@ -200,8 +200,12 @@ static int _dpu_encoder_phys_cmd_handle_ppdone_timeout(
 			  cmd_enc->pp_timeout_report_cnt,
 			  atomic_read(&phys_enc->pending_kickoff_cnt));
 		msm_disp_snapshot_state(drm_enc->dev);
-		dpu_core_irq_unregister_callback(phys_enc->dpu_kms,
-				phys_enc->irq[INTR_IDX_RDPTR]);
+		/*
+		 * Keep the rd_ptr (vblank) callback: unregistering it here
+		 * bypasses vblank_refcount, so control_vblank_irq() never
+		 * registers it again and vblank is gone for good after a
+		 * single timeout.
+		 */
 	}
 
 	atomic_add_unless(&phys_enc->pending_kickoff_cnt, -1, 0);
