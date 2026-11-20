@@ -304,6 +304,17 @@ fallback:
 	kms->funcs->flush_commit(kms, crtc_mask);
 	unlock_crtcs(kms, crtc_mask);
 	/*
+	 * The update is in the hardware now: let the next commit swap in its
+	 * state (as the default drm_atomic_helper_commit_tail() does before
+	 * waiting for vblanks). Its commit_tail still waits for this flush
+	 * (wait_flush above) before it programs anything. Waiting for the
+	 * flush first blocked the next atomic ioctl, even a nonblocking one,
+	 * in drm_atomic_helper_swap_state(); on a command-mode panel that is
+	 * the whole frame transfer (~15 ms on the ZTE Axon 7), every frame,
+	 * in the compositor's thread.
+	 */
+	drm_atomic_helper_commit_hw_done(state);
+	/*
 	 * Wait for flush to complete:
 	 */
 	trace_msm_atomic_wait_flush_start(crtc_mask);
@@ -317,7 +328,6 @@ fallback:
 	unlock_crtcs(kms, crtc_mask);
 	kms->funcs->disable_commit(kms);
 
-	drm_atomic_helper_commit_hw_done(state);
 	drm_atomic_helper_cleanup_planes(dev, state);
 
 	trace_msm_atomic_commit_tail_finish(async, crtc_mask);

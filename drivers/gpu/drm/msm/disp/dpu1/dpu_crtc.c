@@ -765,9 +765,14 @@ void dpu_crtc_frame_event_cb(struct drm_crtc *crtc, u32 event)
  */
 void dpu_crtc_complete_commit(struct drm_crtc *crtc)
 {
+	struct dpu_crtc *dpu_crtc = to_dpu_crtc(crtc);
+
 	trace_dpu_crtc_complete_commit(DRMID(crtc));
-	atomic_set(&to_dpu_crtc(crtc)->cmd_flip_armed, 0);
 	dpu_core_perf_crtc_update(crtc, 0);
+	/* a newer commit kicked off already: its flip event is its own */
+	if (atomic_dec_if_positive(&dpu_crtc->kickoffs_pending) > 0)
+		return;
+	atomic_set(&dpu_crtc->cmd_flip_armed, 0);
 	_dpu_crtc_complete_flip(crtc);
 }
 
@@ -1108,6 +1113,7 @@ void dpu_crtc_commit_kickoff(struct drm_crtc *crtc)
 	if (unlikely(!cstate->num_mixers))
 		return;
 
+	atomic_inc(&dpu_crtc->kickoffs_pending);
 	DPU_ATRACE_BEGIN("crtc_commit");
 
 	drm_for_each_encoder_mask(encoder, crtc->dev,
@@ -1269,6 +1275,7 @@ static void dpu_crtc_disable(struct drm_crtc *crtc,
 		atomic_set(&dpu_crtc->frame_pending, 0);
 		atomic_set(&dpu_crtc->cmd_flip_armed, 0);
 	}
+	atomic_set(&dpu_crtc->kickoffs_pending, 0);
 
 	dpu_core_perf_crtc_update(crtc, 0);
 
