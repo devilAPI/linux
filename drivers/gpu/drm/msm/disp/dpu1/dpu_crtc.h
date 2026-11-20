@@ -172,6 +172,8 @@ struct dpu_crtc {
 	struct list_head ad_active;
 
 	atomic_t frame_pending;
+	/* command mode: send the flip event at the next vblank (frame start) */
+	atomic_t cmd_flip_armed;
 	struct dpu_crtc_frame_event frame_events[DPU_CRTC_FRAME_EVENT_SIZE];
 	struct list_head frame_event_list;
 	spinlock_t spin_lock;

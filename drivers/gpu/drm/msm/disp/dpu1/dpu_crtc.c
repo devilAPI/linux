@@ -651,6 +651,18 @@ void dpu_crtc_vblank_callback(struct drm_crtc *crtc)
 
 	drm_crtc_handle_vblank(crtc);
 	trace_dpu_crtc_vblank_cb(DRMID(crtc));
+
+	/*
+	 * Command mode: the vblank (read pointer) irq after a kickoff marks the
+	 * start of the frame transfer. The previous frame's buffers are idle by
+	 * then (the kickoff waited for its pp_done), so complete the flip now
+	 * instead of at this frame's pp_done, a whole transfer (~13 ms on a
+	 * 1440x2560 dual-DSI panel) later. Present and release fences then
+	 * signal at frame start, as on video mode, and userspace can render
+	 * into the old buffer while the new frame is being sent.
+	 */
+	if (atomic_xchg(&dpu_crtc->cmd_flip_armed, 0))
+		_dpu_crtc_complete_flip(crtc);
 }
 
 static void dpu_crtc_frame_event_work(struct kthread_work *work)
@@ -754,6 +766,7 @@ void dpu_crtc_frame_event_cb(struct drm_crtc *crtc, u32 event)
 void dpu_crtc_complete_commit(struct drm_crtc *crtc)
 {
 	trace_dpu_crtc_complete_commit(DRMID(crtc));
+	atomic_set(&to_dpu_crtc(crtc)->cmd_flip_armed, 0);
 	dpu_core_perf_crtc_update(crtc, 0);
 	_dpu_crtc_complete_flip(crtc);
 }
@@ -1119,11 +1132,17 @@ void dpu_crtc_commit_kickoff(struct drm_crtc *crtc)
 
 		dpu_vbif_clear_errors(dpu_kms);
 
+		bool cmd_mode = false;
+
 		drm_for_each_encoder_mask(encoder, crtc->dev,
 				crtc->state->encoder_mask) {
 			dpu_encoder_kickoff(encoder);
 			dpu_encoder_start_frame_done_timer(encoder);
+			if (dpu_encoder_get_intf_mode(encoder) == INTF_MODE_CMD)
+				cmd_mode = true;
 		}
+		if (cmd_mode)
+			atomic_set(&dpu_crtc->cmd_flip_armed, 1);
 	}
 
 	if (atomic_inc_return(&dpu_crtc->frame_pending) == 1) {
@@ -1248,6 +1267,7 @@ static void dpu_crtc_disable(struct drm_crtc *crtc,
 		if (release_bandwidth)
 			dpu_core_perf_crtc_release_bw(crtc);
 		atomic_set(&dpu_crtc->frame_pending, 0);
+		atomic_set(&dpu_crtc->cmd_flip_armed, 0);
 	}
 
 	dpu_core_perf_crtc_update(crtc, 0);
