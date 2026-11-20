@@ -158,7 +158,15 @@ static const struct dma_fence_ops drm_crtc_fence_ops;
 
 static struct drm_crtc *fence_to_crtc(struct dma_fence *fence)
 {
-	BUG_ON(rcu_access_pointer(fence->ops) != &drm_crtc_fence_ops);
+	const struct dma_fence_ops *ops = rcu_access_pointer(fence->ops);
+
+	/*
+	 * dma_fence_signal_locked() sets ops to NULL for fences without
+	 * release and wait, like these: a name query that saw the fence
+	 * unsignalled can get here after a vblank signalled it on another
+	 * CPU. The lock pointer is still the CRTC's.
+	 */
+	WARN_ON_ONCE(ops && ops != &drm_crtc_fence_ops);
 	return container_of(fence->extern_lock, struct drm_crtc, fence_lock);
 }
 
