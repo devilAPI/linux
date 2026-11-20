@@ -206,6 +206,7 @@ static int s6e3ha3_probe(struct mipi_dsi_device *dsi)
 	};
 	const struct backlight_properties bl_props = {
 		.type = BACKLIGHT_RAW,
+		.scale = BACKLIGHT_SCALE_LINEAR,
 		.brightness = 160,
 		.max_brightness = 255,
 	};
