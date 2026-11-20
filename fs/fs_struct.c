@@ -193,8 +193,17 @@ static inline void validate_fs_switch(struct fs_struct *old_fs)
 	if (old_fs != userspace_init_fs)
 		return;
 	pr_warn("VFS: Pid 1 stopped sharing filesystem state\n");
-	set_fs_root(userspace_init_fs, &init_fs.root);
-	set_fs_pwd(userspace_init_fs, &init_fs.root);
+	/*
+	 * Android's init does unshare(CLONE_NEWNS) as PID 1 while its
+	 * property service thread still shares the old fs_struct. Reverting
+	 * that to nullfs leaves the thread without /sys/fs/selinux: every
+	 * property permission check fails and the boot stops. Keep the old
+	 * state, as kernels before 7.3 did.
+	 */
+	if (!IS_ENABLED(CONFIG_ANDROID_BINDER_IPC)) {
+		set_fs_root(userspace_init_fs, &init_fs.root);
+		set_fs_pwd(userspace_init_fs, &init_fs.root);
+	}
 }
 
 struct fs_struct *switch_fs_struct(struct fs_struct *new_fs)
