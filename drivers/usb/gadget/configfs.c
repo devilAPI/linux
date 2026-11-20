@@ -286,8 +286,12 @@ static ssize_t gadget_dev_desc_UDC_store(struct config_item *item,
 
 	mutex_lock(&gi->lock);
 
-	if (!strlen(name)) {
+	/* "none" unbinds as well: Android's init.usb.configfs.rc writes it */
+	if (!strlen(name) || !strcmp(name, "none")) {
 		ret = unregister_gadget(gi);
+		/* nothing bound: already in the wanted state */
+		if (ret == -ENODEV)
+			ret = 0;
 		if (ret)
 			goto err;
 		kfree(name);
@@ -2090,6 +2094,18 @@ void unregister_gadget_item(struct config_item *item)
 }
 EXPORT_SYMBOL_GPL(unregister_gadget_item);
 
+/*
+ * Android's UsbService only creates its device-mode manager (MTP, PTP,
+ * tethering, the "USB preferences" UI) when /sys/class/android_usb exists,
+ * a class the Android common kernel's configfs uevent patch adds. With
+ * config_enableUdcSysfsUsbStateUpdate Android follows the connection state
+ * through /sys/class/udc/<udc>/state instead of that class's uevents, so an
+ * empty class is all it needs.
+ */
+static const struct class android_usb_class = {
+	.name = "android_usb",
+};
+
 static int __init gadget_cfs_init(void)
 {
 	int ret;
@@ -2097,12 +2113,17 @@ static int __init gadget_cfs_init(void)
 	config_group_init(&gadget_subsys.su_group);
 
 	ret = configfs_register_subsystem(&gadget_subsys);
-	return ret;
+	if (ret)
+		return ret;
+	if (class_register(&android_usb_class))
+		pr_warn("usb configfs: no android_usb class\n");
+	return 0;
 }
 module_init(gadget_cfs_init);
 
 static void __exit gadget_cfs_exit(void)
 {
+	class_unregister(&android_usb_class);
 	configfs_unregister_subsystem(&gadget_subsys);
 }
 module_exit(gadget_cfs_exit);
