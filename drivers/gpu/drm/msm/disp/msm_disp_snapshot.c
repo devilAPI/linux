@@ -5,6 +5,8 @@
 
 #define pr_fmt(fmt)	"[drm:%s:%d] " fmt, __func__, __LINE__
 
+#include <linux/moduleparam.h>
+
 #include "msm_disp_snapshot.h"
 
 static ssize_t __maybe_unused disp_devcoredump_read(char *buffer, loff_t offset,
@@ -78,10 +80,23 @@ static void _msm_disp_snapshot_work(struct kthread_work *work)
 			disp_devcoredump_read, msm_disp_state_free);
 }
 
+/*
+ * The snapshot reads every display block's registers, the DSI PHY's too.
+ * On MSM8996 after a command-mode kickoff timeout that read can hit an
+ * unclocked PHY and end in an asynchronous SError, which panics the
+ * kernel. Debugging aid only: off unless msm.disp_snapshot=1.
+ */
+static bool disp_snapshot;
+MODULE_PARM_DESC(disp_snapshot, "Capture a display state snapshot (devcoredump) on display errors");
+module_param(disp_snapshot, bool, 0600);
+
 void msm_disp_snapshot_state(struct drm_device *drm_dev)
 {
 	struct msm_drm_private *priv;
 	struct msm_kms *kms;
+
+	if (!disp_snapshot)
+		return;
 
 	if (!drm_dev) {
 		DRM_ERROR("invalid params\n");
