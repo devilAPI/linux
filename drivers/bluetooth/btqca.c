@@ -660,7 +660,7 @@ int qca_set_bdaddr_rome(struct hci_dev *hdev, const bdaddr_t *bdaddr)
 {
 	struct sk_buff *skb;
 	u8 cmd[9];
-	int err;
+	int err, i;
 
 	cmd[0] = EDL_NVM_ACCESS_SET_REQ_CMD;
 	cmd[1] = 0x02; 			/* TAG ID */
@@ -675,6 +675,25 @@ int qca_set_bdaddr_rome(struct hci_dev *hdev, const bdaddr_t *bdaddr)
 	}
 
 	kfree_skb(skb);
+
+	/*
+	 * ROME restarts after the address tag changed. The HCI reset of the
+	 * following init sometimes arrived while it did and timed out ("Opcode
+	 * 0x0c03 failed: -110"), leaving the controller in setup for good.
+	 * Wait until it answers a reset again.
+	 */
+	for (i = 0; i < 5; i++) {
+		skb = __hci_cmd_sync(hdev, HCI_OP_RESET, 0, NULL,
+				     msecs_to_jiffies(1000));
+		if (!IS_ERR(skb)) {
+			kfree_skb(skb);
+			if (i)
+				bt_dev_info(hdev, "QCA reset after the address change: %d tries",
+					    i + 1);
+			return 0;
+		}
+	}
+	bt_dev_warn(hdev, "QCA no reset answer after the address change");
 
 	return 0;
 }
